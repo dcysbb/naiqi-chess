@@ -1,0 +1,45 @@
+appId: com.chessgame.darkchess
+productName: 暗棋象棋
+copyright: Private use
+
+directories:
+  output: dist-desktop
+  buildResources: build
+
+# Application source files packed into app.asar.
+files:
+  - desktop/main.js
+  - desktop/preload.js
+  - server/**
+  - package.json
+
+# Serve the built client OUTSIDE the asar (cleaner static path resolution).
+extraResources:
+  - from: client/dist
+    to: client-dist
+    filter: ['**/*']
+
+asarUnpack:
+  - '**/node_modules/bonjour-service/**'
+
+win:
+  target:
+    - nsis
+  artifactName: 暗棋象棋-${version}-setup.${ext}
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: 暗棋象棋
+
+mac:
+  target:
+    - dmg
+  category: public.app-category.games
+  artifactName: 暗棋象棋-${version}.${ext}
+
+# No code signing (self-use).
+forceCodeSigning: false

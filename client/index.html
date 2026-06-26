@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#0f3460" />
+  <link rel="icon" type="image/svg+xml" href="/icon.svg" />
+  <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="暗棋象棋" />
+  <title>暗棋象棋</title>
+</head>
+<body>
+  <div id="root"></div>
+  <script>
+    window.onerror = function(msg, url, line, col, error) {
+      document.getElementById('root').innerHTML =
+        '<div style="background:#111;color:#f44;padding:20px;font-family:monospace;font-size:14px">' +
+        '<h2>JS Error</h2>' +
+        '<p><b>Message:</b> ' + (msg || 'unknown') + '</p>' +
+        '<p><b>URL:</b> ' + (url || '') + '</p>' +
+        '<p><b>Line:</b> ' + (line || '') + ':' + (col || '') + '</p>' +
+        '<pre style="white-space:pre-wrap;word-break:break-all">' + (error ? error.stack : '') + '</pre>' +
+        '</div>';
+      return true;
+    };
+    window.addEventListener('unhandledrejection', function(e) {
+      document.getElementById('root').innerHTML +=
+        '<div style="background:#111;color:#f84;padding:20px;font-family:monospace;font-size:14px">' +
+        '<h2>Unhandled Promise Rejection</h2>' +
+        '<pre style="white-space:pre-wrap;word-break:break-all">' + (e.reason ? e.reason.stack || e.reason : '') + '</pre>' +
+        '</div>';
+    });
+  </script>
+  <script type="module" src="/src/main.jsx"></script>
+</body>
+</html>

@@ -1,0 +1,46 @@
+name: Build Desktop Installers
+
+# Produces signed-optional installers that can't be built in a symlink-restricted
+# Windows environment (the local sandbox blocks winCodeSign's macOS .dylib
+# symlink extraction). Run this on CI (symlinks work fine here) to get the real
+# NSIS .exe (Windows) and .dmg (macOS).
+#
+# Trigger manually from the Actions tab, or on tag push.
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - run: npm install
+      - run: cd client && npm install
+      - run: cd server && npm install
+      - run: npm run build
+      - run: npx electron-builder --win nsis
+      - uses: actions/upload-artifact@v4
+        with:
+          name: 暗棋象棋-windows-installer
+          path: dist-desktop/*.exe
+
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - run: npm install
+      - run: cd client && npm install
+      - run: cd server && npm install
+      - run: npm run build
+      - run: npx electron-builder --mac dmg
+      - uses: actions/upload-artifact@v4
+        with:
+          name: 暗棋象棋-macos-installer
+          path: dist-desktop/*.dmg

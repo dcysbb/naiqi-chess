@@ -1,0 +1,33 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+client/dist/
+dist-desktop/
+*.zip
+*.apk
+*.exe
+*.dmg
+
+# Native build artifacts
+client/android/app/build/
+client/android/.gradle/
+client/android/local.properties
+client/android/captures/
+
+# Logs
+*.log
+server.out.log
+server.err.log
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Capacitor
+client/android/app/src/main/assets/public/
+
+# Cache
+.cache/
