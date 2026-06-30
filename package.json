@@ -12,7 +12,7 @@
     "dist:mac": "cd client && npx vite build && cd .. && electron-builder --mac",
     "sync:mobile": "cd client && npx vite build && npx cap sync",
     "open:android": "npx cap open android",
-    "apk": "cd client && npx vite build && npx cap sync android && cd ../mobile/android && ./gradlew assembleDebug",
+    "apk": "cd client && npx vite build && npx cap sync android && cd android && gradlew.bat assembleDebug",
     "server": "cd server && node index.js",
     "dev": "cd client && npx vite --host",
     "start": "cd server && node index.js"

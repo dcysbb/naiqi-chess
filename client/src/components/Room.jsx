@@ -96,10 +96,28 @@ export default function Room({ onRoomCreated, onRoomJoined, onColorSelected, cop
     handleConnectHost(url);
   }, [manualIp, handleConnectHost]);
 
-  const handleCreate = () => {
+  const handleCreate = async () => {
     setError('');
-    socket.emit('create_room', { mode: gameMode }, (res) => {
-      if (res.ok) {
+    if (!socket.connected) {
+      const target = getCurrentUrl() || DEFAULT_URL;
+      if (!target) {
+        setError('请先连接局域网主机，再创建房间');
+        return;
+      }
+      try {
+        await connectTo(target);
+      } catch (e) {
+        setError('无法连接主机，请确认主机服务正在运行');
+        return;
+      }
+    }
+
+    socket.timeout(5000).emit('create_room', { mode: gameMode }, (err, res) => {
+      if (err) {
+        setError('创建房间超时，请检查主机连接');
+        return;
+      }
+      if (res?.ok) {
         setRoomId(res.roomId);
         setGameMode(res.mode);
         onRoomCreated(res.roomId);

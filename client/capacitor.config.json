@@ -3,7 +3,7 @@
   "appName": "暗棋象棋",
   "webDir": "dist",
   "server": {
-    "androidScheme": "https"
+    "androidScheme": "http"
   },
   "android": {
     "allowMixedContent": true

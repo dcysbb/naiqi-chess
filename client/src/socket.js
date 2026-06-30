@@ -21,10 +21,10 @@ export const isCapacitor = typeof window !== 'undefined'
 //   - Capacitor (mobile): null — must pick a LAN host first
 export const DEFAULT_URL = isPackagedDesktop
   ? `http://localhost:${queryPort || 3030}`
-  : isLocalDev
-    ? 'http://localhost:3030'
-    : isCapacitor
-      ? null
+  : isCapacitor
+    ? null
+    : isLocalDev
+      ? 'http://localhost:3030'
       : window.location.origin;
 
 let currentUrl = DEFAULT_URL;
