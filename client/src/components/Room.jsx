@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { socket, connectTo, getCurrentUrl, DEFAULT_URL } from '../socket.js';
+import { socket, connectTo, getCurrentUrl, DEFAULT_URL, isCapacitor, startMobileHost } from '../socket.js';
 import { startDiscovery } from '../discovery.js';
 
 const MODES = [
@@ -14,6 +14,14 @@ function modeLabelOf(mode) {
 function shortUrl(url) {
   if (!url) return '';
   return url.replace(/^https?:\/\//, '');
+}
+
+function manualHostUrl(input) {
+  const host = input.trim();
+  if (!host) return '';
+  if (/^https?:\/\//i.test(host)) return host;
+  if (/:\d+$/.test(host)) return `http://${host}`;
+  return `http://${host}:3030`;
 }
 
 export default function Room({ onRoomCreated, onRoomJoined, onColorSelected, copyFeedback, onCopyRoom }) {
@@ -92,7 +100,7 @@ export default function Room({ onRoomCreated, onRoomJoined, onColorSelected, cop
       setError('请输入主机 IP，例如 192.168.1.5');
       return;
     }
-    const url = ip.startsWith('http') ? ip : `http://${ip}:3030`;
+    const url = manualHostUrl(ip);
     handleConnectHost(url);
   }, [manualIp, handleConnectHost]);
 
@@ -101,14 +109,23 @@ export default function Room({ onRoomCreated, onRoomJoined, onColorSelected, cop
     if (!socket.connected) {
       const target = getCurrentUrl() || DEFAULT_URL;
       if (!target) {
-        setError('请先连接局域网主机，再创建房间');
-        return;
-      }
-      try {
-        await connectTo(target);
-      } catch (e) {
-        setError('无法连接主机，请确认主机服务正在运行');
-        return;
+        if (!isCapacitor) {
+          setError('请先连接局域网主机，再创建房间');
+          return;
+        }
+        try {
+          await startMobileHost();
+        } catch (e) {
+          setError('无法启动手机主机，请确认当前是 Android App 并已连接 Wi-Fi 或热点');
+          return;
+        }
+      } else {
+        try {
+          await connectTo(target);
+        } catch (e) {
+          setError('无法连接主机，请确认主机服务正在运行');
+          return;
+        }
       }
     }
 
@@ -268,7 +285,7 @@ export default function Room({ onRoomCreated, onRoomJoined, onColorSelected, cop
               fontSize: '11px', opacity: 0.6, marginBottom: '6px',
               padding: '6px 8px', background: 'rgba(0,0,0,0.2)', borderRadius: '6px',
             }}>
-              手机端需连接局域网内的桌面主机。请在同一 Wi-Fi 下，让一台电脑运行桌面版并创建房间。
+              手机端可直接创建房间，也可加入同一 Wi-Fi / 热点内的桌面或手机主机。
             </div>
           )}
 
@@ -290,7 +307,7 @@ export default function Room({ onRoomCreated, onRoomJoined, onColorSelected, cop
                 {h.hostName} {getCurrentUrl() === h.url ? '✓' : ''}
               </div>
               <div style={{ fontSize: '11px', opacity: 0.6 }}>
-                {shortUrl(h.url)}{h.openRooms !== undefined ? ` · 开放房间 ${h.openRooms}` : ''}
+                {shortUrl(h.url)}{h.mobileHost ? ' · 手机主机' : ''}{h.openRooms !== undefined ? ` · 开放房间 ${h.openRooms}` : ''}
               </div>
             </button>
           ))}

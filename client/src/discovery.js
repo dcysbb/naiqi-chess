@@ -1,3 +1,5 @@
+import { getMobileNetworkInfo } from './mobileHost.js';
+
 // LAN host discovery. Two strategies depending on platform:
 //   1. Desktop (Electron): mDNS via the preload bridge (window.chessDiscovery).
 //      Fast and reliable, discovers other desktop hosts on the LAN.
@@ -10,6 +12,8 @@
  * @property {string} hostName - friendly name
  * @property {string} hostId   - stable id for de-dup
  * @property {number} [openRooms]
+ * @property {string} [address]
+ * @property {boolean} [mobileHost]
  */
 
 // --- Strategy 1: mDNS via Electron preload bridge ---
@@ -25,15 +29,18 @@ function normalizeMdns(raw) {
   return {
     url: `http://${raw.address}:${raw.port}`,
     hostName: raw.hostName || raw.name || raw.address,
-    hostId: raw.hostId || raw.name || raw.address,
+    hostId: `${raw.hostId || raw.name || raw.address}:${raw.port}`,
+    address: raw.address,
     openRooms: raw.openRooms,
+    mobileHost: Boolean(raw.mobileHost),
   };
 }
 
 // --- Strategy 2: subnet IP scan (browser / mobile) ---
 const SCAN_TIMEOUT = 1200; // ms per probe
+const DESKTOP_PORTS = Array.from({ length: 11 }, (_, i) => 3030 + i);
 
-function candidateSubnets() {
+function commonCandidateIps() {
   // We can't read the local IP from a browser. The pragmatic approach: probe
   // the most common home/LAN subnets on the last octet 1..254. Most home
   // routers hand out IPs in 192.168.x. or 10.0.0.x ranges. This is best-effort.
@@ -42,6 +49,8 @@ function candidateSubnets() {
     '192.168.1',
     '192.168.2',
     '192.168.3',
+    '192.168.43',
+    '172.20.10',
     '10.0.0',
     '10.0.1',
   ];
@@ -50,6 +59,24 @@ function candidateSubnets() {
   const out = [];
   for (const base of bases) for (const o of octets) out.push(`${base}.${o}`);
   return out;
+}
+
+async function candidateIps() {
+  const out = new Set();
+
+  // Android can tell us the actual local IP, which makes hotspot discovery much
+  // faster and less guessy. Scan those real /24 networks before the fallbacks.
+  const network = await getMobileNetworkInfo();
+  for (const address of network?.addresses || []) {
+    const parts = String(address).split('.');
+    if (parts.length !== 4) continue;
+    const base = parts.slice(0, 3).join('.');
+    for (const octet of [1, 2, 100, 101, 254]) out.add(`${base}.${octet}`);
+    for (let i = 1; i <= 254; i++) out.add(`${base}.${i}`);
+  }
+
+  for (const ip of commonCandidateIps()) out.add(ip);
+  return Array.from(out);
 }
 
 async function probeHost(ip, port) {
@@ -64,8 +91,10 @@ async function probeHost(ip, port) {
     return {
       url: `http://${ip}:${port}`,
       hostName: info.hostName || ip,
-      hostId: info.hostId || ip,
+      hostId: `${info.hostId || ip}:${port}`,
+      address: ip,
       openRooms: info.openRooms,
+      mobileHost: Boolean(info.mobileHost),
     };
   } catch (_) {
     return null;
@@ -75,7 +104,7 @@ async function probeHost(ip, port) {
 }
 
 async function scanSubnet(port, onFound, concurrency = 40) {
-  const ips = candidateSubnets();
+  const ips = await candidateIps();
   let cursor = 0;
   async function worker() {
     while (cursor < ips.length) {
@@ -99,10 +128,22 @@ async function scanSubnet(port, onFound, concurrency = 40) {
  */
 export function startDiscovery(onHost, opts = {}) {
   const port = opts.port || 3030;
+  const ports = opts.ports || DESKTOP_PORTS;
   const seen = new Map(); // hostId -> host
+  const scannedAlternatePorts = new Set();
   let stopped = false;
   let mdnsActive = false;
   const stopFns = [];
+
+  async function scanAlternatePorts(address) {
+    if (!address || scannedAlternatePorts.has(address)) return;
+    scannedAlternatePorts.add(address);
+    const extras = ports.filter((p) => p !== port);
+    await Promise.all(extras.map(async (candidatePort) => {
+      const host = await probeHost(address, candidatePort);
+      if (host) report(host);
+    }));
+  }
 
   function report(host) {
     if (stopped) return;
@@ -116,6 +157,7 @@ export function startDiscovery(onHost, opts = {}) {
     }
     seen.set(host.hostId, host);
     onHost(host);
+    scanAlternatePorts(host.address).catch(() => {});
   }
 
   // Try mDNS first (desktop). If unavailable, run the IP scan.

@@ -3,6 +3,7 @@
   "appName": "暗棋象棋",
   "webDir": "dist",
   "server": {
+    "hostname": "chess.local",
     "androidScheme": "http"
   },
   "android": {

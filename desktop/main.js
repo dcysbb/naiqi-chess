@@ -108,10 +108,9 @@ function createWindow(port) {
     },
   });
 
-  // Pass the embedded server port to the client so it connects to the right place.
-  mainWindow.loadFile(path.join(__dirname, '..', 'client', 'dist', 'index.html'), {
-    query: { serverPort: String(port) },
-  });
+  // Serve the built app over the embedded HTTP server so Vite's absolute asset
+  // paths resolve correctly in Electron.
+  mainWindow.loadURL(`http://localhost:${port}/?serverPort=${port}`);
 }
 
 app.whenReady().then(async () => {

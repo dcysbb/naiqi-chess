@@ -7,6 +7,7 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: 'autoUpdate',
+      injectRegister: false,
       includeAssets: ['favicon-32.png', 'apple-touch-icon.png', 'icon.svg'],
       manifest: {
         name: '暗棋象棋',
