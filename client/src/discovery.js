@@ -102,6 +102,7 @@ export function startDiscovery(onHost, opts = {}) {
   const seen = new Map(); // hostId -> host
   let stopped = false;
   let mdnsActive = false;
+  const stopFns = [];
 
   function report(host) {
     if (stopped) return;
@@ -130,7 +131,6 @@ export function startDiscovery(onHost, opts = {}) {
     stopFns.push(() => clearInterval(interval));
   }
 
-  const stopFns = [];
   stopFns.push(() => {
     stopped = true;
     const bridge = window.chessDiscovery;
