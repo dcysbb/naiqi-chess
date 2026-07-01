@@ -1,5 +1,5 @@
 appId: com.chessgame.darkchess
-productName: 暗棋象棋
+productName: 奶棋
 copyright: Private use
 
 directories:
@@ -25,7 +25,7 @@ asarUnpack:
 win:
   target:
     - nsis
-  artifactName: 暗棋象棋-${version}-setup.${ext}
+  artifactName: 奶棋-${version}-setup.${ext}
 
 nsis:
   oneClick: false
@@ -33,13 +33,13 @@ nsis:
   allowToChangeInstallationDirectory: true
   createDesktopShortcut: true
   createStartMenuShortcut: true
-  shortcutName: 暗棋象棋
+  shortcutName: 奶棋
 
 mac:
   target:
     - dmg
   category: public.app-category.games
-  artifactName: 暗棋象棋-${version}.${ext}
+  artifactName: 奶棋-${version}.${ext}
 
 # No code signing (self-use).
 forceCodeSigning: false

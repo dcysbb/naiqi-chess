@@ -1,6 +1,6 @@
 {
   "name": "chess-game",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "private": true,
   "main": "desktop/main.js",
   "scripts": {
@@ -17,7 +17,7 @@
     "dev": "cd client && npx vite --host",
     "start": "cd server && node index.js"
   },
-  "description": "暗棋象棋 - Hidden Piece Chinese Chess Online",
+  "description": "奶棋 - LAN multiplayer board game",
   "devDependencies": {
     "electron": "^33.0.0",
     "electron-builder": "^25.1.8",

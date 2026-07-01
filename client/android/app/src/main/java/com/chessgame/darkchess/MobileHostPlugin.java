@@ -46,7 +46,7 @@ public class MobileHostPlugin extends Plugin {
 
     private volatile SimpleHttpServer server;
     private volatile int port = DEFAULT_PORT;
-    private volatile String hostName = "暗棋手机";
+    private volatile String hostName = "奶棋手机";
     private volatile String hostId = "mobile-host";
     private volatile int openRooms = 0;
 

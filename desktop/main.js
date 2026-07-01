@@ -100,7 +100,7 @@ function createWindow(port) {
     minWidth: 900,
     minHeight: 640,
     backgroundColor: '#16213e',
-    title: '暗棋象棋',
+    title: '奶棋',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,

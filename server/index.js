@@ -35,7 +35,7 @@ function generateRoomId() {
  */
 function createServer(options = {}) {
   const clientDir = options.clientDir || path.join(__dirname, '..', 'client', 'dist');
-  const hostName = options.hostName || `象棋-${generateHostId()}`;
+  const hostName = options.hostName || `奶棋-${generateHostId()}`;
   const port = options.port || DEFAULT_PORT;
   const hostInfo = { hostName, hostId: generateHostId(), port };
 
@@ -94,16 +94,18 @@ function createServer(options = {}) {
     if (info && info.roomId) {
       const session = rooms.get(info.roomId);
       socket.leave(info.roomId);
-      if (session && info.color) {
-        session.removePlayer(socket.id);
-        const remainingSocket = session.players.red || session.players.black;
-        if (remainingSocket) {
-          const rs = io.sockets.sockets.get(remainingSocket);
-          if (rs) {
-            rs.emit('opponent_left', {});
-            rs.emit('game_state', session.getPublicState(
-              session.players.red ? 'red' : 'black'
-            ));
+      if (session) {
+        if (info.color) {
+          session.removePlayer(socket.id);
+          const remainingSocket = session.players.red || session.players.black;
+          if (remainingSocket) {
+            const rs = io.sockets.sockets.get(remainingSocket);
+            if (rs) {
+              rs.emit('opponent_left', {});
+              rs.emit('game_state', session.getPublicState(
+                session.players.red ? 'red' : 'black'
+              ));
+            }
           }
         }
         if (!session.players.red && !session.players.black) {

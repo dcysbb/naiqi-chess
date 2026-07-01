@@ -82,14 +82,16 @@ export class LocalGameServer {
     this.lobby.delete(clientId);
     if (info?.roomId) {
       const session = this.rooms.get(info.roomId);
-      if (session && info.color) {
-        session.removePlayer(clientId);
-        const remainingClient = session.players.red || session.players.black;
-        if (remainingClient) {
-          this.send(remainingClient, 'opponent_left', {});
-          this.send(remainingClient, 'game_state', session.getPublicState(
-            session.players.red ? 'red' : 'black',
-          ));
+      if (session) {
+        if (info.color) {
+          session.removePlayer(clientId);
+          const remainingClient = session.players.red || session.players.black;
+          if (remainingClient) {
+            this.send(remainingClient, 'opponent_left', {});
+            this.send(remainingClient, 'game_state', session.getPublicState(
+              session.players.red ? 'red' : 'black',
+            ));
+          }
         }
         if (!session.players.red && !session.players.black) {
           this.rooms.delete(info.roomId);

@@ -1,6 +1,6 @@
 {
   "appId": "com.chessgame.darkchess",
-  "appName": "暗棋象棋",
+  "appName": "奶棋",
   "webDir": "dist",
   "server": {
     "hostname": "chess.local",

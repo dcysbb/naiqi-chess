@@ -62,11 +62,11 @@ electron-builder 生成 NSIS 安装包时会下载 `winCodeSign`，其中含 mac
   ```bash
   npx electron-builder --win nsis
   ```
-  产物：`dist-desktop/暗棋象棋-1.0.0-setup.exe`
+  产物：`dist-desktop/奶棋-1.0.3-setup.exe`
 
 - **B. 用 GitHub Actions（推荐，无需改本机）**：推一个 `v*` 标签或到 Actions 页手动触发 `Build Desktop Installers` 工作流，CI 环境无符号链接限制，可直接产出 `.exe` 与 `.dmg`。配置见 `.github/workflows/build-desktop.yml`。
 
-当前环境已验证**可用的解压版**：`暗棋象棋-1.0.0-windows-portable.zip`（解压后双击 `暗棋象棋.exe` 即可运行，自带服务器、mDNS 局域网广播）。
+当前环境已验证**可用的解压版**：`奶棋-windows-portable.zip`（解压后双击 `奶棋.exe` 即可运行，自带服务器、mDNS 局域网广播）。
 
 ## 3. macOS 桌面端
 
@@ -75,7 +75,7 @@ electron-builder 生成 NSIS 安装包时会下载 `winCodeSign`，其中含 mac
 ```bash
 npm run build
 npx electron-builder --mac dmg
-# 产物：dist-desktop/暗棋象棋-1.0.0.dmg（未签名，首次打开需右键 → 打开）
+# 产物：dist-desktop/奶棋-1.0.3.dmg（未签名，首次打开需右键 → 打开）
 ```
 
 或使用上述 GitHub Actions 工作流。

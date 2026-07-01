@@ -29,7 +29,7 @@ function colorLabel(color) {
 }
 
 function modeLabel(mode) {
-  return mode === 'dark' ? '正常暗棋' : '暗棋象棋';
+  return mode === 'dark' ? '正常暗棋' : '奶棋';
 }
 
 function moveText(moveResult) {

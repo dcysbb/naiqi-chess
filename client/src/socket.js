@@ -211,10 +211,10 @@ class LocalHostTransport {
       }),
     ];
 
-    this.info = await MobileHost.start({ port: 3030, hostName: '暗棋手机' });
+    this.info = await MobileHost.start({ port: 3030, hostName: '奶棋手机' });
     this.url = this.info?.url || this.info?.urls?.[0] || `http://localhost:${this.info?.port || 3030}`;
     this.server = new LocalGameServer({
-      hostName: this.info?.hostName || '暗棋手机',
+      hostName: this.info?.hostName || '奶棋手机',
       hostId: this.info?.hostId || 'mobile-host',
       onSend: (clientId, event, payload) => {
         if (clientId === 'local') {

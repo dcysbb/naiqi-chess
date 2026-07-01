@@ -9,6 +9,8 @@ export default function App() {
   const [roomId, setRoomId] = useState(null);
   const [myColor, setMyColor] = useState(null);
   const myColorRef = useRef(null);
+  const screenRef = useRef(screen);
+  const gameHistoryPushedRef = useRef(false);
   const [gameState, setGameState] = useState(null);
   const [moveResult, setMoveResult] = useState(null);
   const [gameOver, setGameOver] = useState(null);
@@ -91,6 +93,15 @@ export default function App() {
     myColorRef.current = color;
   }, []);
 
+  const handleRoomCancelled = useCallback(() => {
+    setRoomId(null);
+    setMyColor(null);
+    myColorRef.current = null;
+    setMoveResult(null);
+    setGameOver(null);
+    setRematch({ mine: false, opp: false });
+  }, []);
+
   const handleCopyRoom = useCallback(() => {
     if (!roomId) return;
 
@@ -111,6 +122,8 @@ export default function App() {
   }, [roomId]);
 
   const handleGoBack = useCallback(() => {
+    screenRef.current = 'room';
+    gameHistoryPushedRef.current = false;
     socket.emit('leave_room');
     setScreen('room');
     setRoomId(null);
@@ -121,6 +134,65 @@ export default function App() {
     setGameOver(null);
     setRematch({ mine: false, opp: false });
   }, []);
+
+  const requestGameBack = useCallback(() => {
+    if (gameHistoryPushedRef.current && window.history.length > 1) {
+      window.history.back();
+      return;
+    }
+    handleGoBack();
+  }, [handleGoBack]);
+
+  useEffect(() => {
+    screenRef.current = screen;
+    if (screen === 'game' && !gameHistoryPushedRef.current) {
+      window.history.pushState({ chessView: 'game' }, '');
+      gameHistoryPushedRef.current = true;
+    }
+    if (screen === 'room') {
+      gameHistoryPushedRef.current = false;
+    }
+  }, [screen]);
+
+  useEffect(() => {
+    const onBackRequest = () => {
+      if (screenRef.current !== 'game') return false;
+      handleGoBack();
+      return true;
+    };
+
+    const onPopState = () => {
+      onBackRequest();
+    };
+
+    const onKeyDown = (event) => {
+      const wantsBack = event.key === 'Escape'
+        || event.key === 'BrowserBack'
+        || (event.altKey && event.key === 'ArrowLeft');
+      if (!wantsBack || screenRef.current !== 'game') return;
+      event.preventDefault();
+      requestGameBack();
+    };
+
+    const onNativeBack = () => {
+      onBackRequest();
+    };
+
+    window.__chessHandleNativeBack = () => {
+      if (onBackRequest()) return true;
+      return window.__chessHandleRoomBack?.() === true;
+    };
+
+    window.addEventListener('popstate', onPopState);
+    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('native-back', onNativeBack);
+    return () => {
+      window.removeEventListener('popstate', onPopState);
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('native-back', onNativeBack);
+      if (window.__chessHandleNativeBack) delete window.__chessHandleNativeBack;
+    };
+  }, [handleGoBack, requestGameBack]);
 
   const handleRematch = useCallback(() => {
     if (!roomId || !myColor) return;
@@ -139,6 +211,7 @@ export default function App() {
           onRoomCreated={handleRoomCreated}
           onRoomJoined={handleRoomJoined}
           onColorSelected={handleColorSelected}
+          onRoomCancelled={handleRoomCancelled}
           copyFeedback={copyFeedback}
           onCopyRoom={handleCopyRoom}
         />
@@ -161,7 +234,7 @@ export default function App() {
             roomId={roomId}
             gameOver={gameOver}
             moveResult={moveResult}
-            onGoBack={handleGoBack}
+            onGoBack={requestGameBack}
             copyFeedback={copyFeedback}
             onCopyRoom={handleCopyRoom}
             rematch={rematch}
@@ -175,23 +248,24 @@ export default function App() {
   };
 
   return (
-    <div style={{
-      minHeight: '100vh',
-      background: 'linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%)',
-      color: '#e0e0e0',
-      fontFamily: 'system-ui, sans-serif',
-    }}>
-      <header style={{
-        textAlign: 'center',
-        padding: '16px',
-        background: 'rgba(0,0,0,0.3)',
-        borderBottom: '1px solid rgba(255,255,255,0.1)',
-      }}>
-        <h1 style={{ margin: 0, fontSize: '24px', letterSpacing: '4px' }}>暗棋象棋</h1>
-        <p style={{ margin: '4px 0 0', fontSize: '12px', opacity: 0.6 }}>Hidden Piece Chinese Chess</p>
+    <div className="app-shell">
+      <header className="app-header">
+        {screen === 'game' && (
+          <button
+            type="button"
+            className="icon-button app-back-button"
+            onClick={requestGameBack}
+            title="返回房间"
+            aria-label="返回房间"
+          >
+            ‹
+          </button>
+        )}
+        <h1 className="app-title">奶棋</h1>
+        <p className="app-subtitle">局域网联机对战</p>
       </header>
 
-      <main style={{ display: 'flex', justifyContent: 'center', padding: '16px', gap: '16px', flexWrap: 'wrap' }}>
+      <main className="app-main">
         {renderContent()}
       </main>
     </div>

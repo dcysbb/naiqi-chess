@@ -3,12 +3,12 @@ import { socket, connectTo, getCurrentUrl, DEFAULT_URL, isCapacitor, startMobile
 import { startDiscovery } from '../discovery.js';
 
 const MODES = [
-  { id: 'chaos', label: '暗棋象棋', note: '传统象棋棋盘，暗子按所在位置走' },
+  { id: 'chaos', label: '奶棋', note: '传统棋盘，暗子按所在位置走' },
   { id: 'dark', label: '正常暗棋', note: '4x8 翻翻棋，翻子、走一格、炮隔子吃' },
 ];
 
 function modeLabelOf(mode) {
-  return MODES.find((m) => m.id === mode)?.label || '暗棋象棋';
+  return MODES.find((m) => m.id === mode)?.label || '奶棋';
 }
 
 function shortUrl(url) {
@@ -24,7 +24,14 @@ function manualHostUrl(input) {
   return `http://${host}:3030`;
 }
 
-export default function Room({ onRoomCreated, onRoomJoined, onColorSelected, copyFeedback, onCopyRoom }) {
+export default function Room({
+  onRoomCreated,
+  onRoomJoined,
+  onColorSelected,
+  onRoomCancelled,
+  copyFeedback,
+  onCopyRoom,
+}) {
   const [step, setStep] = useState('choose');
   const [gameMode, setGameMode] = useState('chaos');
   const [roomId, setRoomId] = useState(null);
@@ -37,6 +44,19 @@ export default function Room({ onRoomCreated, onRoomJoined, onColorSelected, cop
   const [scanning, setScanning] = useState(false);
   const stopDiscoveryRef = useRef(null);
   const hostsRef = useRef(new Map());
+  const stepRef = useRef(step);
+  const selectColorHistoryPushedRef = useRef(false);
+
+  useEffect(() => {
+    stepRef.current = step;
+    if (step === 'select_color' && !selectColorHistoryPushedRef.current) {
+      window.history.pushState({ chessView: 'select_color' }, '');
+      selectColorHistoryPushedRef.current = true;
+    }
+    if (step === 'choose') {
+      selectColorHistoryPushedRef.current = false;
+    }
+  }, [step]);
 
   // Subscribe to lobby updates while on the choose screen.
   const enterLobby = useCallback(() => {
@@ -173,6 +193,54 @@ export default function Room({ onRoomCreated, onRoomJoined, onColorSelected, cop
     });
   };
 
+  const handleBackToChoose = useCallback((fromHistory = false) => {
+    const shouldPopHistory = selectColorHistoryPushedRef.current && window.history.length > 1;
+    stepRef.current = 'choose';
+    selectColorHistoryPushedRef.current = false;
+    socket.emit('leave_room');
+    setStep('choose');
+    setRoomId(null);
+    setAvailableColors([]);
+    setError('');
+    onRoomCancelled?.();
+    if (!fromHistory && shouldPopHistory) {
+      window.history.back();
+    }
+  }, [onRoomCancelled]);
+
+  useEffect(() => {
+    const onPopState = () => {
+      if (stepRef.current === 'select_color') handleBackToChoose(true);
+    };
+    const onKeyDown = (event) => {
+      const wantsBack = event.key === 'Escape'
+        || event.key === 'BrowserBack'
+        || (event.altKey && event.key === 'ArrowLeft');
+      if (!wantsBack || stepRef.current !== 'select_color') return;
+      event.preventDefault();
+      handleBackToChoose();
+    };
+    const onNativeBack = () => {
+      if (stepRef.current === 'select_color') handleBackToChoose(true);
+    };
+
+    window.__chessHandleRoomBack = () => {
+      if (stepRef.current !== 'select_color') return false;
+      handleBackToChoose(true);
+      return true;
+    };
+
+    window.addEventListener('popstate', onPopState);
+    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('native-back', onNativeBack);
+    return () => {
+      window.removeEventListener('popstate', onPopState);
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('native-back', onNativeBack);
+      if (window.__chessHandleRoomBack) delete window.__chessHandleRoomBack;
+    };
+  }, [handleBackToChoose]);
+
   useEffect(() => {
     const handler = ({ color }) => {
       setAvailableColors((prev) => prev.filter((c) => c !== color));
@@ -191,16 +259,6 @@ export default function Room({ onRoomCreated, onRoomJoined, onColorSelected, cop
     color: '#fff',
     fontWeight: 'bold',
   });
-
-  const cardStyle = {
-    background: 'rgba(255,255,255,0.08)',
-    borderRadius: '8px',
-    padding: '24px',
-    maxWidth: '520px',
-    width: '100%',
-    textAlign: 'center',
-    backdropFilter: 'blur(10px)',
-  };
 
   const modeButtonStyle = (active) => ({
     padding: '10px 12px',
@@ -230,8 +288,10 @@ export default function Room({ onRoomCreated, onRoomJoined, onColorSelected, cop
 
   if (step === 'choose') {
     return (
-      <div style={cardStyle}>
-        <h2 style={{ margin: '0 0 18px' }}>开始游戏</h2>
+      <div className="room-card">
+        <div className="room-card-header">
+          <h2 style={{ margin: 0 }}>开始游戏</h2>
+        </div>
 
         <div style={{ display: 'flex', gap: '10px', marginBottom: '18px', flexWrap: 'wrap' }}>
           {MODES.map((mode) => (
@@ -400,8 +460,19 @@ export default function Room({ onRoomCreated, onRoomJoined, onColorSelected, cop
   if (step === 'select_color') {
     const modeLabel = modeLabelOf(gameMode);
     return (
-      <div style={cardStyle}>
-        <h2 style={{ margin: '0 0 8px' }}>房间号：{roomId}</h2>
+      <div className="room-card">
+        <div className="room-card-header">
+          <button
+            type="button"
+            className="icon-button room-card-back"
+            onClick={() => handleBackToChoose()}
+            title="返回"
+            aria-label="返回"
+          >
+            ‹
+          </button>
+          <h2 style={{ margin: 0 }}>房间号：{roomId}</h2>
+        </div>
         <div style={{ marginBottom: '10px', opacity: 0.72, fontSize: '13px' }}>{modeLabel}</div>
         <button
           onClick={onCopyRoom}
