@@ -25,7 +25,7 @@ asarUnpack:
 win:
   target:
     - nsis
-  artifactName: 奶棋-${version}-setup.${ext}
+  artifactName: naiqi-${version}-setup.${ext}
 
 nsis:
   oneClick: false
@@ -38,8 +38,14 @@ nsis:
 mac:
   target:
     - dmg
+    - zip
   category: public.app-category.games
-  artifactName: 奶棋-${version}.${ext}
+  artifactName: naiqi-${version}-${arch}.${ext}
+  sign: build/sign-mac.js
+  hardenedRuntime: false
+  gatekeeperAssess: false
+  notarize: false
 
-# No code signing (self-use).
+# No certificate-backed code signing (self-use). macOS builds are ad-hoc signed
+# in build/sign-mac.js; notarization still requires an Apple Developer ID.
 forceCodeSigning: false

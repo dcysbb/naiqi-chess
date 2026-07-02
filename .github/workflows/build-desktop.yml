@@ -26,7 +26,7 @@ jobs:
       - run: npx electron-builder --win nsis --publish never
       - uses: actions/upload-artifact@v4
         with:
-          name: 奶棋-windows-installer
+          name: naiqi-windows-installer
           path: dist-desktop/*.exe
 
   build-macos:
@@ -39,8 +39,15 @@ jobs:
       - run: cd client && npm install
       - run: cd server && npm install
       - run: npm run build
-      - run: npx electron-builder --mac dmg --publish never
+      - run: npx electron-builder --mac dmg zip --universal --publish never
+      - run: |
+          APP_PATH="$(find dist-desktop -name '奶棋.app' -type d | head -n 1)"
+          test -n "$APP_PATH"
+          codesign --verify --deep --strict "$APP_PATH"
+          codesign -dv --verbose=2 "$APP_PATH"
       - uses: actions/upload-artifact@v4
         with:
-          name: 奶棋-macos-installer
-          path: dist-desktop/*.dmg
+          name: naiqi-macos-universal
+          path: |
+            dist-desktop/*.dmg
+            dist-desktop/*.zip
