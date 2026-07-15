@@ -2,9 +2,26 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { socket, connectTo, getCurrentUrl, DEFAULT_URL, isCapacitor, startMobileHost } from '../socket.js';
 import { startDiscovery } from '../discovery.js';
 
+const TWO_SEATS = ['red', 'black'];
+const SEAT_LABELS = {
+  red: '红', black: '黑',
+  wei: '魏', shu: '蜀', wu: '吴',
+};
+const SEAT_COLORS = {
+  red: '#e74c3c', black: '#2c3e50',
+  wei: '#c0392b', shu: '#2c3e50', wu: '#27ae60',
+};
+
+function seatsForMode(mode) {
+  if (mode === 'three-open' || mode === 'three-dark') return ['wei', 'shu', 'wu'];
+  return TWO_SEATS;
+}
+
 const MODES = [
-  { id: 'chaos', label: '奶棋', note: '传统棋盘，暗子按所在位置走' },
-  { id: 'dark', label: '正常暗棋', note: '4x8 翻翻棋，翻子、走一格、炮隔子吃' },
+  { id: 'chaos', label: '暗棋象棋', note: '传统象棋棋盘，暗子按所在位置走', seats: 2 },
+  { id: 'dark', label: '正常暗棋', note: '4x8 翻翻棋，翻子、走一格、炮隔子吃', seats: 2 },
+  { id: 'three-open', label: '三人明棋', note: '魏蜀吴三分天下，明棋对战', seats: 3 },
+  { id: 'three-dark', label: '三人暗棋', note: '魏蜀吴三分天下，暗子翻面', seats: 3 },
 ];
 
 function modeLabelOf(mode) {
@@ -158,7 +175,8 @@ export default function Room({
         setRoomId(res.roomId);
         setGameMode(res.mode);
         onRoomCreated(res.roomId);
-        setAvailableColors(['red', 'black'].filter((c) => !(res.taken || []).includes(c)));
+        const seats = (res.seats && res.seats.length) ? res.seats : seatsForMode(res.mode);
+        setAvailableColors(seats.filter((c) => !(res.taken || []).includes(c)));
         setStep('select_color');
       } else {
         setError(res.error || '创建房间失败');
@@ -166,14 +184,15 @@ export default function Room({
     });
   };
 
-  const handleJoinRoom = (targetRoomId, taken) => {
+  const handleJoinRoom = (targetRoomId, taken, mode) => {
     setError('');
     socket.emit('join_room', { roomId: targetRoomId }, (res) => {
       if (res.ok) {
         setRoomId(res.roomId);
         setGameMode(res.mode);
         onRoomJoined(res.roomId);
-        setAvailableColors(['red', 'black'].filter((c) => !(res.taken || taken || []).includes(c)));
+        const seats = (res.seats && res.seats.length) ? res.seats : seatsForMode(res.mode || mode);
+        setAvailableColors(seats.filter((c) => !(res.taken || taken || []).includes(c)));
         setStep('select_color');
       } else {
         setError(res.error || '加入房间失败');
@@ -418,36 +437,38 @@ export default function Room({
             </div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '240px', overflowY: 'auto' }}>
-              {rooms.map((r) => (
-                <button
-                  key={r.roomId}
-                  onClick={() => handleJoinRoom(r.roomId, r.taken)}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    padding: '10px 14px',
-                    borderRadius: '8px',
-                    border: '1px solid rgba(255,255,255,0.15)',
-                    background: 'rgba(0,0,0,0.25)',
-                    color: '#fff',
-                    cursor: 'pointer',
-                    textAlign: 'left',
-                  }}
-                >
-                  <div>
-                    <div style={{ fontWeight: 700, letterSpacing: '2px' }}>{r.roomId}</div>
-                    <div style={{ fontSize: '11px', opacity: 0.6, marginTop: '2px' }}>{modeLabelOf(r.mode)}</div>
-                  </div>
-                  <div style={{ textAlign: 'right' }}>
-                    <div style={{ marginBottom: '4px' }}>
-                      {seatTag(r.taken, 'red', '红')}
-                      {seatTag(r.taken, 'black', '黑')}
+              {rooms.map((r) => {
+                const seats = (r.seats && r.seats.length) ? r.seats : seatsForMode(r.mode);
+                return (
+                  <button
+                    key={r.roomId}
+                    onClick={() => handleJoinRoom(r.roomId, r.taken, r.mode)}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      padding: '10px 14px',
+                      borderRadius: '8px',
+                      border: '1px solid rgba(255,255,255,0.15)',
+                      background: 'rgba(0,0,0,0.25)',
+                      color: '#fff',
+                      cursor: 'pointer',
+                      textAlign: 'left',
+                    }}
+                  >
+                    <div>
+                      <div style={{ fontWeight: 700, letterSpacing: '2px' }}>{r.roomId}</div>
+                      <div style={{ fontSize: '11px', opacity: 0.6, marginTop: '2px' }}>{modeLabelOf(r.mode)}</div>
                     </div>
-                    <span style={{ fontSize: '12px', color: '#3498db' }}>加入 ›</span>
-                  </div>
-                </button>
-              ))}
+                    <div style={{ textAlign: 'right' }}>
+                      <div style={{ marginBottom: '4px' }}>
+                        {seats.map((c) => seatTag(r.taken, c, SEAT_LABELS[c] || c))}
+                      </div>
+                      <span style={{ fontSize: '12px', color: '#3498db' }}>加入 ›</span>
+                    </div>
+                  </button>
+                );
+              })}
             </div>
           )}
         </div>
@@ -486,24 +507,24 @@ export default function Room({
           {copyFeedback ? '已复制' : '复制房间号'}
         </button>
         <p style={{ opacity: 0.7, fontSize: '14px' }}>选择你的阵营：</p>
-        <div style={{ display: 'flex', gap: '16px', justifyContent: 'center', marginTop: '16px', flexWrap: 'wrap' }}>
-          {availableColors.includes('red') ? (
-            <button style={{ ...btnStyle('#e74c3c'), fontSize: '18px' }} onClick={() => handleSelectColor('red')}>
-              红方 先手
-            </button>
-          ) : (
-            <span style={{ color: '#888', alignSelf: 'center' }}>红方已选</span>
-          )}
-          {availableColors.includes('black') ? (
-            <button
-              style={{ ...btnStyle('#2c3e50'), fontSize: '18px', border: '2px solid #555' }}
-              onClick={() => handleSelectColor('black')}
-            >
-              黑方 后手
-            </button>
-          ) : (
-            <span style={{ color: '#888', alignSelf: 'center' }}>黑方已选</span>
-          )}
+        <div style={{ display: 'flex', gap: '12px', justifyContent: 'center', marginTop: '16px', flexWrap: 'wrap' }}>
+          {seatsForMode(gameMode).map((c) => {
+            const label = SEAT_LABELS[c] || c;
+            if (availableColors.includes(c)) {
+              return (
+                <button
+                  key={c}
+                  style={{ ...btnStyle(SEAT_COLORS[c] || '#34495e'), fontSize: '18px' }}
+                  onClick={() => handleSelectColor(c)}
+                >
+                  {label}方
+                </button>
+              );
+            }
+            return (
+              <span key={c} style={{ color: '#888', alignSelf: 'center' }}>{label}方已选</span>
+            );
+          })}
         </div>
         {error && <p style={{ color: '#e74c3c', marginTop: '12px' }}>{error}</p>}
         <p style={{ marginTop: '20px', fontSize: '12px', opacity: 0.5 }}>等待对手加入...</p>

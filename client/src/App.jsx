@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { socket, DEFAULT_URL } from './socket.js';
 import Room from './components/Room.jsx';
 import Board from './components/Board.jsx';
+import ThreeBoard from './components/ThreeBoard.jsx';
 import Panel from './components/Panel.jsx';
 
 export default function App() {
@@ -27,18 +28,25 @@ export default function App() {
       if (state.status !== 'finished') setGameOver(null);
       // Sync rematch flags from authoritative server state when available.
       if (state.rematch) {
-        const oppColor = myColorRef.current === 'red' ? 'black' : 'red';
-        setRematch({
-          mine: Boolean(state.rematch[myColorRef.current]),
-          opp: Boolean(state.rematch[oppColor]),
-        });
+        const mine = Boolean(state.rematch[myColorRef.current]);
+        // 三人模式：others 表示除我之外是否有人已申请；双人：opp 单标志
+        const others = {};
+        let anyOther = false;
+        for (const k of Object.keys(state.rematch)) {
+          if (k !== myColorRef.current) {
+            others[k] = Boolean(state.rematch[k]);
+            if (state.rematch[k]) anyOther = true;
+          }
+        }
+        setRematch({ mine, opp: anyOther, others });
       }
       setScreen('game');
     };
     const onMoveMade = (data) => setMoveResult(data);
     const onGameOver = (data) => setGameOver(data);
     const onOpponentDisconnected = () => {
-      setGameOver({ winner: myColorRef.current, reason: 'opponent_disconnected' });
+      // 三人模式不直接判我胜，由后续 game_state/game_over 决定
+      setGameOver((prev) => prev || { winner: myColorRef.current, reason: 'opponent_disconnected' });
     };
     const onRematchUpdate = ({ who }) => {
       // Opponent (who !== myColor) is requesting; mark their flag.
@@ -219,15 +227,26 @@ export default function App() {
     }
 
     if (screen === 'game' && gameState) {
+      const isThree = gameState.isThree;
       return (
         <>
-          <Board
-            gameState={gameState}
-            myColor={myColor}
-            socket={socket}
-            gameOver={gameOver}
-            moveResult={moveResult}
-          />
+          {isThree ? (
+            <ThreeBoard
+              gameState={gameState}
+              myColor={myColor}
+              socket={socket}
+              gameOver={gameOver}
+              moveResult={moveResult}
+            />
+          ) : (
+            <Board
+              gameState={gameState}
+              myColor={myColor}
+              socket={socket}
+              gameOver={gameOver}
+              moveResult={moveResult}
+            />
+          )}
           <Panel
             gameState={gameState}
             myColor={myColor}

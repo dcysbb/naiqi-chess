@@ -1,5 +1,8 @@
 import React, { useEffect, useState } from 'react';
 
+const THREE_LABELS = { wei: '魏', shu: '蜀', wu: '吴' };
+const THREE_TAG_COLORS = { wei: true, shu: false, wu: 'wu' };
+
 const PIECE_CHARS = {
   general: { red: '帅', black: '将' },
   advisor: { red: '仕', black: '士' },
@@ -25,11 +28,17 @@ function pieceChar(piece, color) {
 }
 
 function colorLabel(color) {
-  return color === 'red' ? '红方' : '黑方';
+  if (color === 'red') return '红方';
+  if (color === 'black') return '黑方';
+  if (THREE_LABELS[color]) return `${THREE_LABELS[color]}方`;
+  return color;
 }
 
 function modeLabel(mode) {
-  return mode === 'dark' ? '正常暗棋' : '奶棋';
+  if (mode === 'dark') return '正常暗棋';
+  if (mode === 'three-open') return '三人明棋';
+  if (mode === 'three-dark') return '三人暗棋';
+  return '暗棋象棋';
 }
 
 function moveText(moveResult) {
@@ -195,14 +204,21 @@ export default function Panel({
       </div>
 
       <div style={{ marginBottom: '12px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
-          <span style={tagStyle(true)}>红{myColor === 'red' ? '（你）' : ''}</span>
-          <span style={{ fontSize: '12px', opacity: 0.7 }}>{players.red === 'connected' ? '在线' : '等待'}</span>
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <span style={tagStyle(false)}>黑{myColor === 'black' ? '（你）' : ''}</span>
-          <span style={{ fontSize: '12px', opacity: 0.7 }}>{players.black === 'connected' ? '在线' : '等待'}</span>
-        </div>
+        {Object.keys(players).map((c) => {
+          const isMe = c === myColor;
+          const isThree = !!THREE_LABELS[c];
+          const tagColor = isThree ? THREE_TAG_COLORS[c] : (c === 'red');
+          const label = THREE_LABELS[c] || (c === 'red' ? '红' : '黑');
+          const eliminated = (gameState.eliminated || []).includes(c);
+          return (
+            <div key={c} style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px', opacity: eliminated ? 0.4 : 1 }}>
+              <span style={tagStyle(tagColor)}>{label}{isMe ? '（你）' : ''}</span>
+              <span style={{ fontSize: '12px', opacity: 0.7 }}>
+                {eliminated ? '已出局' : (players[c] === 'connected' ? '在线' : '等待')}
+              </span>
+            </div>
+          );
+        })}
       </div>
 
       <div style={{
@@ -212,7 +228,7 @@ export default function Panel({
         marginBottom: '12px',
       }}>
         <div style={{ fontSize: '14px', marginBottom: '4px' }}>
-          当前回合：<span style={tagStyle(currentTurn === 'red')}>{colorLabel(currentTurn)}</span>
+          当前回合：<span style={tagStyle(currentTurn === 'red' ? true : (THREE_LABELS[currentTurn] ? THREE_TAG_COLORS[currentTurn] : false))}>{colorLabel(currentTurn)}</span>
         </div>
         {gameOver && (
           <div style={{

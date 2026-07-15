@@ -31,3 +31,4 @@ client/android/app/src/main/assets/public/
 
 # Cache
 .cache/
+.zcode/

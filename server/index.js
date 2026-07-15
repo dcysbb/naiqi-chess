@@ -6,6 +6,20 @@ const path = require('path');
 const os = require('os');
 const { GameSession } = require('./game/session');
 const { findTraditionalType } = require('./game/moves');
+const { ThreeGameSession } = require('./game/three/session');
+const { THREE_FACTIONS } = require('./game/three/constants');
+
+function createGameSession(roomId, mode) {
+  if (mode === 'three-open' || mode === 'three-dark') {
+    return new ThreeGameSession(roomId, mode);
+  }
+  return new GameSession(roomId, mode);
+}
+
+// 是否为三人模式会话
+function isThreeSession(session) {
+  return session instanceof ThreeGameSession;
+}
 
 const DEFAULT_PORT = process.env.PORT ? Number(process.env.PORT) : 3030;
 const SERVICE_TYPE = 'chess';
@@ -61,10 +75,14 @@ function createServer(options = {}) {
   const lobby = new Set();
 
   function emitSessionState(roomId, session) {
-    const redSocket = session.players.red ? io.sockets.sockets.get(session.players.red) : null;
-    const blackSocket = session.players.black ? io.sockets.sockets.get(session.players.black) : null;
-    if (redSocket) redSocket.emit('game_state', session.getPublicState('red'));
-    if (blackSocket) blackSocket.emit('game_state', session.getPublicState('black'));
+    // 通用：遍历所有已入座阵营，各自推送其视角的状态。
+    const colors = isThreeSession(session) ? THREE_FACTIONS : ['red', 'black'];
+    for (const color of colors) {
+      const sid = session.players[color];
+      if (!sid) continue;
+      const s = io.sockets.sockets.get(sid);
+      if (s) s.emit('game_state', session.getPublicState(color));
+    }
     io.to(roomId).emit('game_status', session.getStatus());
   }
 
@@ -72,10 +90,9 @@ function createServer(options = {}) {
     const list = [];
     for (const [roomId, session] of rooms.entries()) {
       if (!session.isJoinable()) continue;
-      const taken = [];
-      if (session.players.red) taken.push('red');
-      if (session.players.black) taken.push('black');
-      list.push({ roomId, mode: session.mode, taken, seatsTaken: taken.length });
+      const colors = isThreeSession(session) ? THREE_FACTIONS : ['red', 'black'];
+      const taken = colors.filter((c) => session.players[c]);
+      list.push({ roomId, mode: session.mode, taken, seatsTaken: taken.length, seats: colors.length });
     }
     return list.sort((a, b) => a.roomId.localeCompare(b.roomId));
   }
@@ -94,21 +111,14 @@ function createServer(options = {}) {
     if (info && info.roomId) {
       const session = rooms.get(info.roomId);
       socket.leave(info.roomId);
-      if (session) {
-        if (info.color) {
-          session.removePlayer(socket.id);
-          const remainingSocket = session.players.red || session.players.black;
-          if (remainingSocket) {
-            const rs = io.sockets.sockets.get(remainingSocket);
-            if (rs) {
-              rs.emit('opponent_left', {});
-              rs.emit('game_state', session.getPublicState(
-                session.players.red ? 'red' : 'black'
-              ));
-            }
-          }
-        }
-        if (!session.players.red && !session.players.black) {
+      if (session && info.color) {
+        session.removePlayer(socket.id);
+        const colors = isThreeSession(session) ? THREE_FACTIONS : ['red', 'black'];
+        const seatedColors = colors.filter((c) => session.players[c]);
+        if (seatedColors.length > 0) {
+          emitSessionState(info.roomId, session);
+          io.to(info.roomId).emit('opponent_left', { color: info.color });
+        } else {
           rooms.delete(info.roomId);
         }
       }
@@ -140,13 +150,14 @@ function createServer(options = {}) {
       try {
         let roomId = generateRoomId();
         while (rooms.has(roomId)) roomId = generateRoomId();
-        const session = new GameSession(roomId, payload.mode);
+        const session = createGameSession(roomId, payload.mode);
         rooms.set(roomId, session);
         socketRooms.set(socket.id, { roomId, color: null });
         socket.join(roomId);
         lobby.delete(socket.id);
         broadcastRoomsUpdate();
-        callback({ ok: true, roomId, mode: session.mode, taken: [] });
+        const colors = isThreeSession(session) ? THREE_FACTIONS : ['red', 'black'];
+        callback({ ok: true, roomId, mode: session.mode, taken: [], seats: colors });
       } catch (e) {
         callback({ ok: false, error: e.message });
       }
@@ -156,16 +167,15 @@ function createServer(options = {}) {
       try {
         const session = rooms.get(roomId);
         if (!session) return callback({ ok: false, error: 'Room not found' });
-        if (session.players.red && session.players.black) {
+        const colors = isThreeSession(session) ? THREE_FACTIONS : ['red', 'black'];
+        if (colors.every((c) => session.players[c])) {
           return callback({ ok: false, error: 'Room is full' });
         }
         socketRooms.set(socket.id, { roomId, color: null });
         socket.join(roomId);
         lobby.delete(socket.id);
-        const taken = [];
-        if (session.players.red) taken.push('red');
-        if (session.players.black) taken.push('black');
-        callback({ ok: true, roomId, mode: session.mode, taken });
+        const taken = colors.filter((c) => session.players[c]);
+        callback({ ok: true, roomId, mode: session.mode, taken, seats: colors });
       } catch (e) {
         callback({ ok: false, error: e.message });
       }
@@ -184,16 +194,75 @@ function createServer(options = {}) {
         socket.emit('game_state', session.getPublicState(color));
         broadcastRoomsUpdate();
 
+        const colors = isThreeSession(session) ? THREE_FACTIONS : ['red', 'black'];
         if (session.status === 'playing') {
-          const oppColor = color === 'red' ? 'black' : 'red';
-          const oppSocketId = session.players[oppColor];
-          const oppSocket = oppSocketId ? io.sockets.sockets.get(oppSocketId) : null;
-          if (oppSocket) oppSocket.emit('game_state', session.getPublicState(oppColor));
+          // 通知所有其他已入座玩家更新状态
+          for (const c of colors) {
+            if (c === color) continue;
+            const sid = session.players[c];
+            if (!sid) continue;
+            const s = io.sockets.sockets.get(sid);
+            if (s) s.emit('game_state', session.getPublicState(c));
+          }
           io.to(roomId).emit('game_status', session.getStatus());
         } else {
           socket.to(roomId).emit('opponent_joined', { color });
         }
         callback({ ok: true, color });
+      } catch (e) {
+        callback({ ok: false, error: e.message });
+      }
+    });
+
+    // 三人模式：查询合法走法（用 cellKey）
+    socket.on('get_three_moves', ({ key } = {}, callback) => {
+      try {
+        const info = socketRooms.get(socket.id);
+        if (!info || !info.roomId || !info.color) return callback({ ok: false, moves: [] });
+        const session = rooms.get(info.roomId);
+        if (!session || !isThreeSession(session)) return callback({ ok: false, moves: [] });
+        callback({ ok: true, moves: session.getValidMovesForPlayer(key, info.color) });
+      } catch (e) {
+        callback({ ok: false, moves: [] });
+      }
+    });
+
+    // 三人模式：走子（用 fromKey/toKey）
+    socket.on('make_three_move', ({ fromKey, toKey } = {}, callback) => {
+      try {
+        const info = socketRooms.get(socket.id);
+        if (!info || !info.roomId || !info.color) return callback({ ok: false, error: 'Not in a game' });
+        const session = rooms.get(info.roomId);
+        if (!session || !isThreeSession(session)) return callback({ ok: false, error: 'Room not found' });
+
+        const result = session.tryMove(fromKey, toKey, info.color);
+        if (!result.ok) return callback({ ok: false, error: result.error });
+
+        io.to(info.roomId).emit('move_made', { move: result.move, currentTurn: result.currentTurn });
+        emitSessionState(info.roomId, session);
+        if (result.gameOver) {
+          io.to(info.roomId).emit('game_over', { winner: result.winner, reason: result.reason });
+        }
+        callback({ ok: true });
+      } catch (e) {
+        callback({ ok: false, error: e.message });
+      }
+    });
+
+    // 三人模式：翻面（暗棋）
+    socket.on('flip_three_piece', ({ key } = {}, callback) => {
+      try {
+        const info = socketRooms.get(socket.id);
+        if (!info || !info.roomId || !info.color) return callback({ ok: false, error: 'Not in a game' });
+        const session = rooms.get(info.roomId);
+        if (!session || !isThreeSession(session)) return callback({ ok: false, error: 'Room not found' });
+
+        const result = session.flipPiece(key, info.color);
+        if (!result.ok) return callback({ ok: false, error: result.error });
+
+        io.to(info.roomId).emit('move_made', { move: result.move, currentTurn: result.currentTurn });
+        emitSessionState(info.roomId, session);
+        callback({ ok: true });
       } catch (e) {
         callback({ ok: false, error: e.message });
       }
@@ -284,10 +353,15 @@ function createServer(options = {}) {
         const res = session.requestRematch(color);
         if (!res.ok) return callback({ ok: false, error: res.error });
 
-        const opponentColor = color === 'red' ? 'black' : 'red';
-        const oppSocketId = session.players[opponentColor];
-        const oppSocket = oppSocketId ? io.sockets.sockets.get(oppSocketId) : null;
-        if (oppSocket) oppSocket.emit('rematch_update', { who: color, ready: res.ready });
+        // 通知所有其他已入座玩家
+        const colors = isThreeSession(session) ? THREE_FACTIONS : ['red', 'black'];
+        for (const c of colors) {
+          if (c === color) continue;
+          const sid = session.players[c];
+          if (!sid) continue;
+          const s = io.sockets.sockets.get(sid);
+          if (s) s.emit('rematch_update', { who: color, ready: res.ready });
+        }
 
         if (res.ready) {
           session.resetForRematch();
@@ -312,9 +386,24 @@ function createServer(options = {}) {
         const session = rooms.get(info.roomId);
         if (session) {
           session.removePlayer(socket.id);
-          io.to(info.roomId).emit('opponent_disconnected', { socketId: socket.id });
-          io.to(info.roomId).emit('game_over', { winner: session.winner, reason: 'opponent_disconnected' });
-          if (!session.players.red && !session.players.black) rooms.delete(info.roomId);
+          const colors = isThreeSession(session) ? THREE_FACTIONS : ['red', 'black'];
+          const anySeated = colors.some((c) => session.players[c]);
+          if (anySeated) {
+            // 仍有人在场：通知更新状态（三人模式可能继续，双人则结束）
+            io.to(info.roomId).emit('opponent_disconnected', { socketId: socket.id });
+            if (session.status === 'finished') {
+              // 游戏结束：推送最终状态 + game_over
+              emitSessionState(info.roomId, session);
+              io.to(info.roomId).emit('game_over', { winner: session.winner, reason: 'opponent_disconnected' });
+            } else {
+              emitSessionState(info.roomId, session);
+            }
+          } else {
+            // 无人则删除房间
+            io.to(info.roomId).emit('opponent_disconnected', { socketId: socket.id });
+            io.to(info.roomId).emit('game_over', { winner: session.winner, reason: 'opponent_disconnected' });
+            rooms.delete(info.roomId);
+          }
         }
         broadcastRoomsUpdate();
       }
