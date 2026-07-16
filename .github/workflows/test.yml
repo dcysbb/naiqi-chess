@@ -1,0 +1,30 @@
+name: Test & Build Gate
+
+# 发布门禁：推送/PR 时运行服务端测试、客户端构建、依赖审计；
+# 仅在打 tag 时才产出安装包（由 build-desktop.yml 负责）。
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - name: Install root deps
+        run: npm install
+      - name: Install client deps
+        run: cd client && npm install
+      - name: Install server deps
+        run: cd server && npm install
+      - name: Run server test suite (临时端口自动化)
+        run: npm test
+      - name: Build client (生产构建)
+        run: npm run build
+      - name: Dependency audit (runtime only, non-blocking advisories ignored)
+        run: npm audit --omit=dev || true

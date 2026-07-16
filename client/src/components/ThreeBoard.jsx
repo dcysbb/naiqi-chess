@@ -261,37 +261,40 @@ function drawLastMove(ctx, moveResult, center, viewerFaction) {
   }
 }
 
-// 像素 → cellKey：遍历所有格点找最近
-function getClickedCell(event, canvas, center, viewerFaction, cells, width, height) {
+// 生成棋盘上所有节点（含空格），用于点击命中。每阵营 6×9 + center。
+function allNodes(center, viewerFaction) {
+  const nodes = [];
+  for (const f of ['wei', 'shu', 'wu']) {
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) {
+        const pos = localToCanvas(f, r, c, center, viewerFaction);
+        nodes.push({ key: `${f}:${r}:${c}`, x: pos.x, y: pos.y });
+      }
+    }
+  }
+  nodes.push({ key: 'center', x: center.x, y: center.y });
+  return nodes;
+}
+
+// 像素 → cellKey：遍历所有棋盘节点找最近（覆盖空格，确保可点击）。
+function getClickedCell(event, canvas, center, viewerFaction, width, height) {
   const rect = canvas.getBoundingClientRect();
   const scaleX = width / rect.width;
   const scaleY = height / rect.height;
   const x = (event.clientX - rect.left) * scaleX;
   const y = (event.clientY - rect.top) * scaleY;
 
+  const nodes = allNodes(center, viewerFaction);
   let best = null;
   let bestDist = (RADIUS + 8) * (RADIUS + 8);
-  for (const cell of cells) {
-    let pos;
-    if (cell.key === 'center') {
-      pos = { x: center.x, y: center.y };
-    } else {
-      const [f, row, col] = cell.key.split(':');
-      pos = localToCanvas(f, Number(row), Number(col), center, viewerFaction);
-    }
-    const dx = x - pos.x;
-    const dy = y - pos.y;
+  for (const node of nodes) {
+    const dx = x - node.x;
+    const dy = y - node.y;
     const d = dx * dx + dy * dy;
     if (d < bestDist) {
       bestDist = d;
-      best = cell.key;
+      best = node.key;
     }
-  }
-  // 也检查中心节点
-  const cdx = x - center.x;
-  const cdy = y - center.y;
-  if (cdx * cdx + cdy * cdy < bestDist) {
-    best = 'center';
   }
   return best ? { key: best } : null;
 }
@@ -358,7 +361,7 @@ export default function ThreeBoard({ gameState, myColor, socket, gameOver, moveR
 
   const handleCanvasClick = useCallback((event) => {
     if (!isMyTurn || cells.length === 0) return;
-    const clicked = getClickedCell(event, canvasRef.current, center, myColor, cells, width, height);
+    const clicked = getClickedCell(event, canvasRef.current, center, myColor, width, height);
     if (!clicked) {
       setSelected(null);
       setHighlights([]);

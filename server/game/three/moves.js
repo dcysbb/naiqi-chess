@@ -88,19 +88,21 @@ function horseMoves(board3, faction, row, col) {
 
 // --- 车/炮：沿线扫描，可穿过中心进入其他阵营 ---
 //
-// 关键修正：射线扫描的"当前阵营"应取自棋子所在格（而非移动方阵营），
-// 因为棋子可能已过中心、身处他阵。区域由 cellKey 的 faction 决定。
+// 中心是对称中转节点：车/炮到达 (faction,5,4) 朝中心方向时进入 center，
+// 然后可向"另外两个阵营"分别延伸（对称，无单向优势）。
+// 实现：rayCells 只扫描单条直线（含穿 center 后到下一个阵营），
+// 对称性通过为每个起点生成"穿过 center 到每个其它阵营"的额外方向保证。
 //
 // 局部方向 dr/dc：
 //   dr=+1 朝中心(row 增大)；dr=-1 朝本阵后方(row 减小)
 //   dc=±1 横向
-// 到达 (faction, 5, 4) 且方向朝中心(dr=+1)时，进入 center，再到下一阵营 (other,5,4)，
-// 之后方向转为 dr=-1（朝 other 的本阵后方继续扫描）。
 
-function rayCells(board3, startKey, dr, dc) {
+function rayCells(board3, startKey, dr, dc, targetFaction) {
+  // targetFaction: 射线最终要进入的目标阵营（用于穿 center 时选择）。
+  // 不传则只在本阵内扫描。
   const cells = [];
   const start = parseKey(startKey);
-  if (start.center) return cells; // 车炮不在 center 上调用此函数（由 movesFromCenter 处理）
+  if (start.center) return cells;
 
   let cf = start.faction;
   let cr = start.row;
@@ -117,13 +119,12 @@ function rayCells(board3, startKey, dr, dc) {
       cr = nr; cc = nc;
       continue;
     }
-    // 出本阵边界：仅在 (5,4) 朝中心(dr=+1)时可穿 center
-    if (curDr === 1 && curDc === 0 && cr === 5 && cc === 4 && !visitedCenter) {
+    // 出本阵边界：仅在 (5,4) 朝中心(dr=+1)时可穿 center，进入指定 targetFaction
+    if (curDr === 1 && curDc === 0 && cr === 5 && cc === 4 && !visitedCenter && targetFaction && targetFaction !== cf) {
       cells.push({ key: 'center' });
       visitedCenter = true;
-      const other = nextFaction(cf);
-      cells.push({ key: keyOf(other, 5, 4) });
-      cf = other; cr = 5; cc = 4; curDr = -1; curDc = 0;
+      cells.push({ key: keyOf(targetFaction, 5, 4) });
+      cf = targetFaction; cr = 5; cc = 4; curDr = -1; curDc = 0;
       continue;
     }
     break;
@@ -131,27 +132,59 @@ function rayCells(board3, startKey, dr, dc) {
   return cells;
 }
 
-// 车：4 方向扫描，遇第一颗子停（可吃对方）。
+// 车：本阵 4 方向扫描 + 经 center 到另外两阵营的对称扫描。
 function chariotMoves(board3, startKey) {
   const moves = [];
+  const seen = new Set();
+  function add(key) {
+    if (!seen.has(key)) { seen.add(key); moves.push({ key }); }
+    // 扫描遇第一颗子即停（在下面循环里处理 break）
+  }
+  const start = parseKey(startKey);
+  const originFaction = start.faction;
+
+  // 本阵内 4 方向
   for (const [dr, dc] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) {
     const cells = rayCells(board3, startKey, dr, dc);
     for (const c of cells) {
-      if (hasPiece(board3, c.key)) {
-        moves.push({ key: c.key });
-        break;
-      }
       moves.push({ key: c.key });
+      if (hasPiece(board3, c.key)) break;
     }
   }
-  return moves;
+  // 经 center 到另外两阵营（对称）：从 (origin,5,4) 朝中心，目标为每个其它阵营
+  for (const target of THREE_FACTIONS) {
+    if (target === originFaction) continue;
+    const cells = rayCells(board3, startKey, 1, 0, target);
+    for (const c of cells) {
+      moves.push({ key: c.key });
+      if (hasPiece(board3, c.key)) break;
+    }
+  }
+  // 去重
+  const unique = [];
+  const u = new Set();
+  for (const m of moves) {
+    if (!u.has(m.key)) { u.add(m.key); unique.push(m); }
+  }
+  return unique;
 }
 
 // 炮：同方向扫描，跳第一颗子（炮架），落第二颗子上（可吃）。
 function cannonMoves(board3, startKey) {
   const moves = [];
-  for (const [dr, dc] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) {
-    const cells = rayCells(board3, startKey, dr, dc);
+  const start = parseKey(startKey);
+  const originFaction = start.faction;
+  const rays = [
+    [-1, 0, null], [0, -1, null], [0, 1, null],
+    [1, 0, null], // 本阵朝中心方向（若不到 center 也算）
+  ];
+  for (const target of THREE_FACTIONS) {
+    if (target === originFaction) continue;
+    rays.push([1, 0, target]); // 穿 center 到该阵营
+  }
+
+  for (const [dr, dc, target] of rays) {
+    const cells = rayCells(board3, startKey, dr, dc, target);
     let jumped = false;
     for (const c of cells) {
       if (!jumped) {
@@ -163,10 +196,17 @@ function cannonMoves(board3, startKey) {
       }
     }
   }
-  return moves;
+  // 去重
+  const unique = [];
+  const u = new Set();
+  for (const m of moves) {
+    if (!u.has(m.key)) { u.add(m.key); unique.push(m); }
+  }
+  return unique;
 }
 
 // --- 兵：朝中心方向(+row)一格；过中心后可横走 ---
+// "已过中心"只看 crossedCenter 标志，不再按 row>=5 推断（避免提前横走/后退）。
 function pawnMoves(board3, startKey, piece) {
   const moves = [];
   const start = parseKey(startKey);
@@ -176,7 +216,7 @@ function pawnMoves(board3, startKey, piece) {
     return moves;
   }
   const { faction, row, col } = start;
-  const crossed = piece.crossedCenter || row >= 5;
+  const crossed = Boolean(piece && piece.crossedCenter);
   if (!crossed) {
     const nr = row + 1;
     if (inGrid(nr, col)) moves.push({ key: keyOf(faction, nr, col) });

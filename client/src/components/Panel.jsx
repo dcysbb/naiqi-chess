@@ -41,10 +41,51 @@ function modeLabel(mode) {
   return '暗棋象棋';
 }
 
+const THREE_PIECE_CHARS = {
+  general: { wei: '帥', shu: '将', wu: '王' },
+  advisor: { wei: '仕', shu: '士', wu: '士' },
+  elephant: { wei: '相', shu: '象', wu: '象' },
+  horse: { wei: '傌', shu: '馬', wu: '駒' },
+  chariot: { wei: '俥', shu: '車', wu: '車' },
+  cannon: { wei: '炮', shu: '砲', wu: '砲' },
+  pawn: { wei: '兵', shu: '卒', wu: '卒' },
+};
+
+// 棋子字：双人用红黑，三人用魏蜀吴
+function pieceCharOf(piece, color) {
+  if (THREE_PIECE_CHARS[piece] && THREE_PIECE_CHARS[piece][color]) {
+    return THREE_PIECE_CHARS[piece][color];
+  }
+  return pieceChar(piece, color);
+}
+
+// 简短显示 cellKey（三人模式）：wei:3:4 -> 魏(3,4)，center -> 中心
+function shortCell(key) {
+  if (!key) return '?';
+  if (key === 'center') return '中心';
+  const [f, r, c] = key.split(':');
+  const label = THREE_LABELS[f] || f;
+  return `${label}(${r},${c})`;
+}
+
 function moveText(moveResult) {
   const move = moveResult?.move || moveResult;
   if (!move) return null;
 
+  // 三人模式：用 fromKey/toKey/faction
+  if (move.faction && (move.fromKey !== undefined || move.key !== undefined)) {
+    if (move.type === 'flip') {
+      return `${colorLabel(move.faction)} 翻开 ${shortCell(move.key)}：${pieceCharOf(move.piece, move.faction)}`;
+    }
+    const parts = [];
+    parts.push(`${colorLabel(move.faction)} ${pieceCharOf(move.piece, move.faction)} ${shortCell(move.fromKey)} → ${shortCell(move.toKey)}`);
+    if (move.revealed) parts.push(`真实身份：${pieceCharOf(move.revealed.piece, move.revealed.faction)}`);
+    if (move.captured) parts.push(`吃掉 ${pieceCharOf(move.captured.piece, move.captured.faction)}`);
+    if (move.gameOver) parts.push(`胜因：${reasonText(move.reason)}`);
+    return parts.join('，');
+  }
+
+  // 双人模式：原有逻辑
   if (move.type === 'flip') {
     return `翻开 (${move.col},${move.row})：${pieceChar(move.piece, move.color)}，归属${colorLabel(move.color)}`;
   }
@@ -81,6 +122,8 @@ function reasonText(reason) {
       return '吃光对方棋子';
     case 'opponent_disconnected':
       return '对手断开连接';
+    case 'last_standing':
+      return '淘汰其余阵营，最后站立者胜';
     default:
       return '';
   }

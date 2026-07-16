@@ -45,8 +45,8 @@ export default function App() {
     const onMoveMade = (data) => setMoveResult(data);
     const onGameOver = (data) => setGameOver(data);
     const onOpponentDisconnected = () => {
-      // 三人模式不直接判我胜，由后续 game_state/game_over 决定
-      setGameOver((prev) => prev || { winner: myColorRef.current, reason: 'opponent_disconnected' });
+      // 三人模式不直接判结束，由后续权威 game_state/game_over 决定；
+      // 双人模式下服务器会随后推送 game_over。这里仅作为提示，不擅自判定。
     };
     const onRematchUpdate = ({ who }) => {
       // Opponent (who !== myColor) is requesting; mark their flag.
@@ -60,7 +60,8 @@ export default function App() {
       setGameOver(null);
     };
     const onOpponentLeft = () => {
-      setGameOver({ winner: myColorRef.current, reason: 'opponent_disconnected' });
+      // 离席通知仅作提示；是否结束完全以权威 game_state.status / game_over 为准。
+      // 不再擅自设置本方获胜（否则三人局剩余两方会被错误锁定）。
       setRematch({ mine: false, opp: false });
     };
 

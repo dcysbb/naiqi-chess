@@ -1,5 +1,10 @@
 import { GameSession } from './game/session.js';
+import { ThreeGameSession } from './game/three/session.js';
+import { THREE_FACTIONS } from './game/three/constants.js';
 import { findTraditionalType } from './game/moves.js';
+
+const TWO_COLORS = ['red', 'black'];
+const VALID_MODES = ['chaos', 'dark', 'three-open', 'three-dark'];
 
 function generateRoomId() {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -8,6 +13,19 @@ function generateRoomId() {
     id += chars[Math.floor(Math.random() * chars.length)];
   }
   return id;
+}
+
+function isThreeSession(session) {
+  return session instanceof ThreeGameSession;
+}
+
+// 某会话允许的阵营（座位）集合
+function seatsOf(session) {
+  return isThreeSession(session) ? THREE_FACTIONS : TWO_COLORS;
+}
+
+function isValidRoomId(id) {
+  return typeof id === 'string' && /^[A-Z0-9]{6}$/.test(id);
 }
 
 export class LocalGameServer {
@@ -47,13 +65,15 @@ export class LocalGameServer {
     this.onSend(clientId, event, payload);
   }
 
+  // 通知该房间所有已入座玩家各自视角的状态
   emitSessionState(roomId, session) {
-    const redClient = session.players.red;
-    const blackClient = session.players.black;
-    if (redClient) this.send(redClient, 'game_state', session.getPublicState('red'));
-    if (blackClient) this.send(blackClient, 'game_state', session.getPublicState('black'));
-    for (const clientId of [redClient, blackClient]) {
-      if (clientId) this.send(clientId, 'game_status', session.getStatus());
+    const colors = seatsOf(session);
+    for (const color of colors) {
+      const cid = session.players[color];
+      if (cid) {
+        this.send(cid, 'game_state', session.getPublicState(color));
+        this.send(cid, 'game_status', session.getStatus());
+      }
     }
   }
 
@@ -61,10 +81,9 @@ export class LocalGameServer {
     const list = [];
     for (const [roomId, session] of this.rooms.entries()) {
       if (!session.isJoinable()) continue;
-      const taken = [];
-      if (session.players.red) taken.push('red');
-      if (session.players.black) taken.push('black');
-      list.push({ roomId, mode: session.mode, taken, seatsTaken: taken.length });
+      const colors = seatsOf(session);
+      const taken = colors.filter((c) => session.players[c]);
+      list.push({ roomId, mode: session.mode, taken, seatsTaken: taken.length, seats: colors.length });
     }
     return list.sort((a, b) => a.roomId.localeCompare(b.roomId));
   }
@@ -77,6 +96,14 @@ export class LocalGameServer {
     this.onRoomsChanged(this.info());
   }
 
+  // 一个连接只能属于一个房间、占一个座位
+  ensureLeftPreviousRoom(clientId) {
+    const prev = this.clientRooms.get(clientId);
+    if (prev && prev.roomId) {
+      this.leaveRoom(clientId);
+    }
+  }
+
   leaveRoom(clientId) {
     const info = this.clientRooms.get(clientId);
     this.lobby.delete(clientId);
@@ -85,19 +112,17 @@ export class LocalGameServer {
       if (session) {
         if (info.color) {
           session.removePlayer(clientId);
-          const remainingClient = session.players.red || session.players.black;
-          if (remainingClient) {
-            this.send(remainingClient, 'opponent_left', {});
-            this.send(remainingClient, 'game_state', session.getPublicState(
-              session.players.red ? 'red' : 'black',
-            ));
+          const colors = seatsOf(session);
+          const seatedColors = colors.filter((c) => session.players[c]);
+          if (seatedColors.length > 0) {
+            this.emitSessionState(info.roomId, session);
+            this.send(seatedColors.map((c) => session.players[c]), 'opponent_left', { color: info.color });
+          } else {
+            this.rooms.delete(info.roomId);
           }
         }
-        if (!session.players.red && !session.players.black) {
-          this.rooms.delete(info.roomId);
-        }
+        this.broadcastRoomsUpdate();
       }
-      this.broadcastRoomsUpdate();
     }
     this.clientRooms.delete(clientId);
   }
@@ -109,18 +134,27 @@ export class LocalGameServer {
       const session = this.rooms.get(info.roomId);
       if (session) {
         session.removePlayer(clientId);
-        const recipients = [session.players.red, session.players.black].filter(Boolean);
-        for (const recipient of recipients) {
+        const colors = seatsOf(session);
+        const seated = colors.filter((c) => session.players[c]);
+        for (const recipient of seated) {
           this.send(recipient, 'opponent_disconnected', { clientId });
-          this.send(recipient, 'game_over', { winner: session.winner, reason: 'opponent_disconnected' });
         }
-        if (!session.players.red && !session.players.black) this.rooms.delete(info.roomId);
+        if (session.status === 'finished') {
+          this.emitSessionState(info.roomId, session);
+          for (const recipient of seated) {
+            this.send(recipient, 'game_over', { winner: session.winner, reason: 'opponent_disconnected' });
+          }
+        } else {
+          this.emitSessionState(info.roomId, session);
+        }
+        if (seated.length === 0) this.rooms.delete(info.roomId);
+        this.broadcastRoomsUpdate();
       }
-      this.broadcastRoomsUpdate();
     }
     this.clientRooms.delete(clientId);
   }
 
+  // 统一处理客户端事件（双人/三人共用），返回 ack 给发起方
   handleClientEmit(clientId, event, payload = {}) {
     this.addClient(clientId);
     try {
@@ -135,95 +169,128 @@ export class LocalGameServer {
           return { ok: true };
 
         case 'create_room': {
+          const mode = VALID_MODES.includes(payload?.mode) ? payload.mode : 'chaos';
+          this.ensureLeftPreviousRoom(clientId);
           let roomId = generateRoomId();
           while (this.rooms.has(roomId)) roomId = generateRoomId();
-          const session = new GameSession(roomId, payload?.mode);
+          const SessionCls = (mode === 'three-open' || mode === 'three-dark') ? ThreeGameSession : GameSession;
+          const session = new SessionCls(roomId, mode);
           this.rooms.set(roomId, session);
           this.clientRooms.set(clientId, { roomId, color: null });
           this.lobby.delete(clientId);
           this.broadcastRoomsUpdate();
-          return { ok: true, roomId, mode: session.mode, taken: [] };
+          const colors = seatsOf(session);
+          return { ok: true, roomId, mode: session.mode, taken: [], seats: colors };
         }
 
         case 'join_room': {
-          const session = this.rooms.get(payload?.roomId);
+          const roomId = payload?.roomId;
+          if (!isValidRoomId(roomId)) return { ok: false, error: 'Invalid room id' };
+          const session = this.rooms.get(roomId);
           if (!session) return { ok: false, error: 'Room not found' };
-          if (session.players.red && session.players.black) {
-            return { ok: false, error: 'Room is full' };
-          }
-          this.clientRooms.set(clientId, { roomId: payload.roomId, color: null });
+          if (session.status === 'finished') return { ok: false, error: 'Game already finished' };
+          const colors = seatsOf(session);
+          if (colors.every((c) => session.players[c])) return { ok: false, error: 'Room is full' };
+          this.ensureLeftPreviousRoom(clientId);
+          this.clientRooms.set(clientId, { roomId, color: null });
           this.lobby.delete(clientId);
-          const taken = [];
-          if (session.players.red) taken.push('red');
-          if (session.players.black) taken.push('black');
-          return { ok: true, roomId: payload.roomId, mode: session.mode, taken };
+          const taken = colors.filter((c) => session.players[c]);
+          return { ok: true, roomId, mode: session.mode, taken, seats: colors };
         }
 
         case 'select_color': {
-          const session = this.rooms.get(payload?.roomId);
+          const info = this.clientRooms.get(clientId);
+          const roomId = payload?.roomId;
+          const color = payload?.color;
+          if (!info || info.roomId !== roomId) return { ok: false, error: 'Join the room first' };
+          const session = this.rooms.get(roomId);
           if (!session) return { ok: false, error: 'Room not found' };
-          if (session.players[payload.color]) return { ok: false, error: 'Color taken' };
+          if (!seatsOf(session).includes(color)) return { ok: false, error: 'Invalid color' };
+          if (info.color) return { ok: false, error: 'Already seated' };
+          if (session.players[color] && session.players[color] !== clientId) {
+            return { ok: false, error: 'Color taken' };
+          }
 
-          session.addPlayer(clientId, payload.color);
-          const existing = this.clientRooms.get(clientId);
-          if (existing) existing.color = payload.color;
+          session.addPlayer(clientId, color);
+          info.color = color;
 
-          this.send(clientId, 'game_state', session.getPublicState(payload.color));
+          this.send(clientId, 'game_state', session.getPublicState(color));
           this.broadcastRoomsUpdate();
 
+          const colors = seatsOf(session);
           if (session.status === 'playing') {
-            const oppColor = payload.color === 'red' ? 'black' : 'red';
-            const oppClientId = session.players[oppColor];
-            if (oppClientId) this.send(oppClientId, 'game_state', session.getPublicState(oppColor));
-            for (const recipient of [session.players.red, session.players.black].filter(Boolean)) {
+            for (const c of colors) {
+              if (c === color) continue;
+              const cid = session.players[c];
+              if (cid) this.send(cid, 'game_state', session.getPublicState(c));
+            }
+            for (const recipient of colors.map((c) => session.players[c]).filter(Boolean)) {
               this.send(recipient, 'game_status', session.getStatus());
             }
           } else {
-            const otherClient = Object.values(session.players).find((id) => id && id !== clientId);
-            if (otherClient) this.send(otherClient, 'opponent_joined', { color: payload.color });
+            const otherClient = colors.map((c) => session.players[c]).find((id) => id && id !== clientId);
+            if (otherClient) this.send(otherClient, 'opponent_joined', { color });
           }
-          return { ok: true, color: payload.color };
+          return { ok: true, color };
         }
 
-        case 'get_valid_moves': {
+        // 走法查询（双人/三人统一）
+        case 'get_valid_moves':
+        case 'get_three_moves': {
           const info = this.clientRooms.get(clientId);
           if (!info?.roomId || !info.color) return { ok: false, moves: [] };
           const session = this.rooms.get(info.roomId);
           if (!session) return { ok: false, moves: [] };
-          return { ok: true, moves: session.getValidMovesForPlayer(payload.row, payload.col, info.color) };
+          if (isThreeSession(session)) {
+            return { ok: true, moves: session.getValidMovesForPlayer(payload?.key, info.color) };
+          }
+          return { ok: true, moves: session.getValidMovesForPlayer(payload?.row, payload?.col, info.color) };
         }
 
-        case 'make_move': {
+        // 走子（双人/三人统一）
+        case 'make_move':
+        case 'make_three_move': {
           const info = this.clientRooms.get(clientId);
           if (!info?.roomId || !info.color) return { ok: false, error: 'Not in a game' };
           const session = this.rooms.get(info.roomId);
           if (!session) return { ok: false, error: 'Room not found' };
 
-          const result = session.tryMove(payload.fromRow, payload.fromCol, payload.toRow, payload.toCol, info.color);
+          let result;
+          if (isThreeSession(session)) {
+            result = session.tryMove(payload?.fromKey, payload?.toKey, info.color);
+          } else {
+            result = session.tryMove(payload?.fromRow, payload?.fromCol, payload?.toRow, payload?.toCol, info.color);
+          }
           if (!result.ok) return { ok: false, error: result.error };
 
-          for (const recipient of [session.players.red, session.players.black].filter(Boolean)) {
+          const colors = seatsOf(session);
+          for (const recipient of colors.map((c) => session.players[c]).filter(Boolean)) {
             this.send(recipient, 'move_made', { move: result.move, currentTurn: result.currentTurn });
           }
           this.emitSessionState(info.roomId, session);
           if (result.gameOver) {
-            for (const recipient of [session.players.red, session.players.black].filter(Boolean)) {
+            for (const recipient of colors.map((c) => session.players[c]).filter(Boolean)) {
               this.send(recipient, 'game_over', { winner: result.winner, reason: result.reason });
             }
           }
           return { ok: true };
         }
 
-        case 'flip_piece': {
+        // 翻面（双人/三人统一）
+        case 'flip_piece':
+        case 'flip_three_piece': {
           const info = this.clientRooms.get(clientId);
           if (!info?.roomId || !info.color) return { ok: false, error: 'Not in a game' };
           const session = this.rooms.get(info.roomId);
           if (!session) return { ok: false, error: 'Room not found' };
 
-          const result = session.flipPiece(payload.row, payload.col, info.color);
+          const result = isThreeSession(session)
+            ? session.flipPiece(payload?.key, info.color)
+            : session.flipPiece(payload?.row, payload?.col, info.color);
           if (!result.ok) return { ok: false, error: result.error };
 
-          for (const recipient of [session.players.red, session.players.black].filter(Boolean)) {
+          const colors = seatsOf(session);
+          for (const recipient of colors.map((c) => session.players[c]).filter(Boolean)) {
             this.send(recipient, 'move_made', { move: result.move, currentTurn: result.currentTurn });
           }
           this.emitSessionState(info.roomId, session);
@@ -240,7 +307,7 @@ export class LocalGameServer {
         }
 
         case 'get_traditional_type':
-          return { ok: true, type: findTraditionalType(payload.row, payload.col) };
+          return { ok: true, type: findTraditionalType(payload?.row, payload?.col) };
 
         case 'request_rematch': {
           const info = this.clientRooms.get(clientId);
@@ -254,14 +321,17 @@ export class LocalGameServer {
           const res = session.requestRematch(color);
           if (!res.ok) return { ok: false, error: res.error };
 
-          const opponentColor = color === 'red' ? 'black' : 'red';
-          const oppClientId = session.players[opponentColor];
-          if (oppClientId) this.send(oppClientId, 'rematch_update', { who: color, ready: res.ready });
+          const colors = seatsOf(session);
+          for (const c of colors) {
+            if (c === color) continue;
+            const cid = session.players[c];
+            if (cid) this.send(cid, 'rematch_update', { who: color, ready: res.ready });
+          }
 
           if (res.ready) {
             session.resetForRematch();
             this.emitSessionState(roomId, session);
-            for (const recipient of [session.players.red, session.players.black].filter(Boolean)) {
+            for (const recipient of colors.map((c) => session.players[c]).filter(Boolean)) {
               this.send(recipient, 'rematch_started', {});
             }
             return { ok: true, ready: true };

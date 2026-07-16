@@ -9,6 +9,9 @@ const { findTraditionalType } = require('./game/moves');
 const { ThreeGameSession } = require('./game/three/session');
 const { THREE_FACTIONS } = require('./game/three/constants');
 
+const VALID_MODES = ['chaos', 'dark', 'three-open', 'three-dark'];
+const TWO_COLORS = ['red', 'black'];
+
 function createGameSession(roomId, mode) {
   if (mode === 'three-open' || mode === 'three-dark') {
     return new ThreeGameSession(roomId, mode);
@@ -19,6 +22,29 @@ function createGameSession(roomId, mode) {
 // 是否为三人模式会话
 function isThreeSession(session) {
   return session instanceof ThreeGameSession;
+}
+
+// 某会话允许的阵营（座位）集合
+function seatsOf(session) {
+  return isThreeSession(session) ? THREE_FACTIONS : TWO_COLORS;
+}
+
+// 安全回调封装：客户端未提供 callback 时不抛异常，返回是否成功调用。
+function safeCallback(callback, payload) {
+  if (typeof callback === 'function') {
+    try { callback(payload); return true; } catch (_) { return false; }
+  }
+  return false;
+}
+
+// 校验 roomId 字符串合法性
+function isValidRoomId(id) {
+  return typeof id === 'string' && /^[A-Z0-9]{6}$/.test(id);
+}
+
+// 校验阵营对该会话是否合法
+function isValidColor(session, color) {
+  return seatsOf(session).includes(color);
 }
 
 const DEFAULT_PORT = process.env.PORT ? Number(process.env.PORT) : 3030;
@@ -76,7 +102,7 @@ function createServer(options = {}) {
 
   function emitSessionState(roomId, session) {
     // 通用：遍历所有已入座阵营，各自推送其视角的状态。
-    const colors = isThreeSession(session) ? THREE_FACTIONS : ['red', 'black'];
+    const colors = seatsOf(session);
     for (const color of colors) {
       const sid = session.players[color];
       if (!sid) continue;
@@ -90,7 +116,7 @@ function createServer(options = {}) {
     const list = [];
     for (const [roomId, session] of rooms.entries()) {
       if (!session.isJoinable()) continue;
-      const colors = isThreeSession(session) ? THREE_FACTIONS : ['red', 'black'];
+      const colors = seatsOf(session);
       const taken = colors.filter((c) => session.players[c]);
       list.push({ roomId, mode: session.mode, taken, seatsTaken: taken.length, seats: colors.length });
     }
@@ -113,7 +139,7 @@ function createServer(options = {}) {
       socket.leave(info.roomId);
       if (session && info.color) {
         session.removePlayer(socket.id);
-        const colors = isThreeSession(session) ? THREE_FACTIONS : ['red', 'black'];
+        const colors = seatsOf(session);
         const seatedColors = colors.filter((c) => session.players[c]);
         if (seatedColors.length > 0) {
           emitSessionState(info.roomId, session);
@@ -140,61 +166,95 @@ function createServer(options = {}) {
   io.on('connection', (socket) => {
     console.log(`Client connected: ${socket.id}`);
 
+    // 强制一个连接只能属于一个房间、占一个座位。切换房间前先完整离开旧房间。
+    function ensureLeftPreviousRoom() {
+      const prev = socketRooms.get(socket.id);
+      if (prev && prev.roomId) {
+        leaveRoom(socket);
+      }
+    }
+
     socket.on('enter_lobby', () => {
       lobby.add(socket.id);
       socket.emit('rooms_update', getJoinableRooms());
     });
     socket.on('exit_lobby', () => { lobby.delete(socket.id); });
 
-    socket.on('create_room', (payload = {}, callback) => {
+    socket.on('create_room', (payload, callback) => {
       try {
+        payload = payload || {};
+        const mode = VALID_MODES.includes(payload.mode) ? payload.mode : 'chaos';
+        ensureLeftPreviousRoom();
         let roomId = generateRoomId();
         while (rooms.has(roomId)) roomId = generateRoomId();
-        const session = createGameSession(roomId, payload.mode);
+        const session = createGameSession(roomId, mode);
         rooms.set(roomId, session);
         socketRooms.set(socket.id, { roomId, color: null });
         socket.join(roomId);
         lobby.delete(socket.id);
         broadcastRoomsUpdate();
-        const colors = isThreeSession(session) ? THREE_FACTIONS : ['red', 'black'];
-        callback({ ok: true, roomId, mode: session.mode, taken: [], seats: colors });
+        const colors = seatsOf(session);
+        safeCallback(callback, { ok: true, roomId, mode: session.mode, taken: [], seats: colors });
       } catch (e) {
-        callback({ ok: false, error: e.message });
+        safeCallback(callback, { ok: false, error: e.message });
       }
     });
 
-    socket.on('join_room', ({ roomId }, callback) => {
+    socket.on('join_room', (payload, callback) => {
       try {
+        const roomId = payload?.roomId;
+        if (!isValidRoomId(roomId)) return safeCallback(callback, { ok: false, error: 'Invalid room id' });
         const session = rooms.get(roomId);
-        if (!session) return callback({ ok: false, error: 'Room not found' });
-        const colors = isThreeSession(session) ? THREE_FACTIONS : ['red', 'black'];
-        if (colors.every((c) => session.players[c])) {
-          return callback({ ok: false, error: 'Room is full' });
+        if (!session) return safeCallback(callback, { ok: false, error: 'Room not found' });
+        if (session.status === 'finished') {
+          return safeCallback(callback, { ok: false, error: 'Game already finished' });
         }
+        const colors = seatsOf(session);
+        if (colors.every((c) => session.players[c])) {
+          return safeCallback(callback, { ok: false, error: 'Room is full' });
+        }
+        ensureLeftPreviousRoom();
         socketRooms.set(socket.id, { roomId, color: null });
         socket.join(roomId);
         lobby.delete(socket.id);
         const taken = colors.filter((c) => session.players[c]);
-        callback({ ok: true, roomId, mode: session.mode, taken, seats: colors });
+        safeCallback(callback, { ok: true, roomId, mode: session.mode, taken, seats: colors });
       } catch (e) {
-        callback({ ok: false, error: e.message });
+        safeCallback(callback, { ok: false, error: e.message });
       }
     });
 
-    socket.on('select_color', ({ roomId, color }, callback) => {
+    socket.on('select_color', (payload, callback) => {
       try {
+        const roomId = payload?.roomId;
+        const color = payload?.color;
+        const info = socketRooms.get(socket.id);
+        // 必须已 join 该房间
+        if (!info || info.roomId !== roomId) {
+          return safeCallback(callback, { ok: false, error: 'Join the room first' });
+        }
         const session = rooms.get(roomId);
-        if (!session) return callback({ ok: false, error: 'Room not found' });
-        if (session.players[color]) return callback({ ok: false, error: 'Color taken' });
+        if (!session) return safeCallback(callback, { ok: false, error: 'Room not found' });
+        // 阵营合法性
+        if (!isValidColor(session, color)) {
+          return safeCallback(callback, { ok: false, error: 'Invalid color' });
+        }
+        // 该连接是否已占座
+        if (info.color) {
+          return safeCallback(callback, { ok: false, error: 'Already seated' });
+        }
+        // 该座是否已被别人占
+        if (session.players[color] && session.players[color] !== socket.id) {
+          return safeCallback(callback, { ok: false, error: 'Color taken' });
+        }
 
         session.addPlayer(socket.id, color);
-        const existing = socketRooms.get(socket.id);
-        if (existing) existing.color = color;
+        info.color = color;
 
         socket.emit('game_state', session.getPublicState(color));
         broadcastRoomsUpdate();
 
-        const colors = isThreeSession(session) ? THREE_FACTIONS : ['red', 'black'];
+        const colors = seatsOf(session);
         if (session.status === 'playing') {
           // 通知所有其他已入座玩家更新状态
           for (const c of colors) {
@@ -208,153 +268,153 @@ function createServer(options = {}) {
         } else {
           socket.to(roomId).emit('opponent_joined', { color });
         }
-        callback({ ok: true, color });
+        safeCallback(callback, { ok: true, color });
       } catch (e) {
-        callback({ ok: false, error: e.message });
+        safeCallback(callback, { ok: false, error: e.message });
       }
     });
 
     // 三人模式：查询合法走法（用 cellKey）
-    socket.on('get_three_moves', ({ key } = {}, callback) => {
+    socket.on('get_three_moves', (payload, callback) => {
       try {
         const info = socketRooms.get(socket.id);
-        if (!info || !info.roomId || !info.color) return callback({ ok: false, moves: [] });
+        if (!info || !info.roomId || !info.color) return safeCallback(callback, { ok: false, moves: [] });
         const session = rooms.get(info.roomId);
-        if (!session || !isThreeSession(session)) return callback({ ok: false, moves: [] });
-        callback({ ok: true, moves: session.getValidMovesForPlayer(key, info.color) });
+        if (!session || !isThreeSession(session)) return safeCallback(callback, { ok: false, moves: [] });
+        safeCallback(callback, { ok: true, moves: session.getValidMovesForPlayer(payload?.key, info.color) });
       } catch (e) {
-        callback({ ok: false, moves: [] });
+        safeCallback(callback, { ok: false, moves: [] });
       }
     });
 
     // 三人模式：走子（用 fromKey/toKey）
-    socket.on('make_three_move', ({ fromKey, toKey } = {}, callback) => {
+    socket.on('make_three_move', (payload, callback) => {
       try {
         const info = socketRooms.get(socket.id);
-        if (!info || !info.roomId || !info.color) return callback({ ok: false, error: 'Not in a game' });
+        if (!info || !info.roomId || !info.color) return safeCallback(callback, { ok: false, error: 'Not in a game' });
         const session = rooms.get(info.roomId);
-        if (!session || !isThreeSession(session)) return callback({ ok: false, error: 'Room not found' });
+        if (!session || !isThreeSession(session)) return safeCallback(callback, { ok: false, error: 'Room not found' });
 
-        const result = session.tryMove(fromKey, toKey, info.color);
-        if (!result.ok) return callback({ ok: false, error: result.error });
+        const result = session.tryMove(payload?.fromKey, payload?.toKey, info.color);
+        if (!result.ok) return safeCallback(callback, { ok: false, error: result.error });
 
         io.to(info.roomId).emit('move_made', { move: result.move, currentTurn: result.currentTurn });
         emitSessionState(info.roomId, session);
         if (result.gameOver) {
           io.to(info.roomId).emit('game_over', { winner: result.winner, reason: result.reason });
         }
-        callback({ ok: true });
+        safeCallback(callback, { ok: true });
       } catch (e) {
-        callback({ ok: false, error: e.message });
+        safeCallback(callback, { ok: false, error: e.message });
       }
     });
 
     // 三人模式：翻面（暗棋）
-    socket.on('flip_three_piece', ({ key } = {}, callback) => {
+    socket.on('flip_three_piece', (payload, callback) => {
       try {
         const info = socketRooms.get(socket.id);
-        if (!info || !info.roomId || !info.color) return callback({ ok: false, error: 'Not in a game' });
+        if (!info || !info.roomId || !info.color) return safeCallback(callback, { ok: false, error: 'Not in a game' });
         const session = rooms.get(info.roomId);
-        if (!session || !isThreeSession(session)) return callback({ ok: false, error: 'Room not found' });
+        if (!session || !isThreeSession(session)) return safeCallback(callback, { ok: false, error: 'Room not found' });
 
-        const result = session.flipPiece(key, info.color);
-        if (!result.ok) return callback({ ok: false, error: result.error });
+        const result = session.flipPiece(payload?.key, info.color);
+        if (!result.ok) return safeCallback(callback, { ok: false, error: result.error });
 
         io.to(info.roomId).emit('move_made', { move: result.move, currentTurn: result.currentTurn });
         emitSessionState(info.roomId, session);
-        callback({ ok: true });
+        safeCallback(callback, { ok: true });
       } catch (e) {
-        callback({ ok: false, error: e.message });
+        safeCallback(callback, { ok: false, error: e.message });
       }
     });
 
-    socket.on('get_valid_moves', ({ row, col }, callback) => {
+    socket.on('get_valid_moves', (payload, callback) => {
       try {
         const info = socketRooms.get(socket.id);
-        if (!info || !info.roomId || !info.color) return callback({ ok: false, moves: [] });
+        if (!info || !info.roomId || !info.color) return safeCallback(callback, { ok: false, moves: [] });
         const session = rooms.get(info.roomId);
-        if (!session) return callback({ ok: false, moves: [] });
-        callback({ ok: true, moves: session.getValidMovesForPlayer(row, col, info.color) });
+        if (!session) return safeCallback(callback, { ok: false, moves: [] });
+        safeCallback(callback, { ok: true, moves: session.getValidMovesForPlayer(payload?.row, payload?.col, info.color) });
       } catch (e) {
-        callback({ ok: false, moves: [] });
+        safeCallback(callback, { ok: false, moves: [] });
       }
     });
 
-    socket.on('make_move', ({ fromRow, fromCol, toRow, toCol }, callback) => {
+    socket.on('make_move', (payload, callback) => {
       try {
         const info = socketRooms.get(socket.id);
-        if (!info || !info.roomId || !info.color) return callback({ ok: false, error: 'Not in a game' });
+        if (!info || !info.roomId || !info.color) return safeCallback(callback, { ok: false, error: 'Not in a game' });
         const session = rooms.get(info.roomId);
-        if (!session) return callback({ ok: false, error: 'Room not found' });
+        if (!session) return safeCallback(callback, { ok: false, error: 'Room not found' });
 
-        const result = session.tryMove(fromRow, fromCol, toRow, toCol, info.color);
-        if (!result.ok) return callback({ ok: false, error: result.error });
+        const result = session.tryMove(payload?.fromRow, payload?.fromCol, payload?.toRow, payload?.toCol, info.color);
+        if (!result.ok) return safeCallback(callback, { ok: false, error: result.error });
 
         io.to(info.roomId).emit('move_made', { move: result.move, currentTurn: result.currentTurn });
         emitSessionState(info.roomId, session);
         if (result.gameOver) {
           io.to(info.roomId).emit('game_over', { winner: result.winner, reason: result.reason });
         }
-        callback({ ok: true });
+        safeCallback(callback, { ok: true });
       } catch (e) {
-        callback({ ok: false, error: e.message });
+        safeCallback(callback, { ok: false, error: e.message });
       }
     });
 
-    socket.on('flip_piece', ({ row, col }, callback) => {
+    socket.on('flip_piece', (payload, callback) => {
       try {
         const info = socketRooms.get(socket.id);
-        if (!info || !info.roomId || !info.color) return callback({ ok: false, error: 'Not in a game' });
+        if (!info || !info.roomId || !info.color) return safeCallback(callback, { ok: false, error: 'Not in a game' });
         const session = rooms.get(info.roomId);
-        if (!session) return callback({ ok: false, error: 'Room not found' });
+        if (!session) return safeCallback(callback, { ok: false, error: 'Room not found' });
 
-        const result = session.flipPiece(row, col, info.color);
-        if (!result.ok) return callback({ ok: false, error: result.error });
+        const result = session.flipPiece(payload?.row, payload?.col, info.color);
+        if (!result.ok) return safeCallback(callback, { ok: false, error: result.error });
 
         io.to(info.roomId).emit('move_made', { move: result.move, currentTurn: result.currentTurn });
         emitSessionState(info.roomId, session);
-        callback({ ok: true });
+        safeCallback(callback, { ok: true });
       } catch (e) {
-        callback({ ok: false, error: e.message });
+        safeCallback(callback, { ok: false, error: e.message });
       }
     });
 
-    socket.on('get_game_state', (_, callback) => {
+    socket.on('get_game_state', (_payload, callback) => {
       try {
         const info = socketRooms.get(socket.id);
-        if (!info || !info.roomId || !info.color) return callback({ ok: false, error: 'Not in a game' });
+        if (!info || !info.roomId || !info.color) return safeCallback(callback, { ok: false, error: 'Not in a game' });
         const session = rooms.get(info.roomId);
-        if (!session) return callback({ ok: false, error: 'Room not found' });
+        if (!session) return safeCallback(callback, { ok: false, error: 'Room not found' });
         socket.emit('game_state', session.getPublicState(info.color));
-        callback({ ok: true });
+        safeCallback(callback, { ok: true });
       } catch (e) {
-        callback({ ok: false, error: e.message });
+        safeCallback(callback, { ok: false, error: e.message });
       }
     });
 
-    socket.on('get_traditional_type', ({ row, col }, callback) => {
+    socket.on('get_traditional_type', (payload, callback) => {
       try {
-        callback({ ok: true, type: findTraditionalType(row, col) });
+        safeCallback(callback, { ok: true, type: findTraditionalType(payload?.row, payload?.col) });
       } catch (e) {
-        callback({ ok: false, type: null });
+        safeCallback(callback, { ok: false, type: null });
       }
     });
 
-    socket.on('request_rematch', ({ roomId } = {}, callback) => {
+    socket.on('request_rematch', (payload, callback) => {
       try {
         const info = socketRooms.get(socket.id);
-        const useRoomId = roomId || info?.roomId;
-        if (!useRoomId) return callback({ ok: false, error: 'Not in a room' });
+        const useRoomId = payload?.roomId || info?.roomId;
+        if (!useRoomId) return safeCallback(callback, { ok: false, error: 'Not in a room' });
         const session = rooms.get(useRoomId);
-        if (!session) return callback({ ok: false, error: 'Room not found' });
+        if (!session) return safeCallback(callback, { ok: false, error: 'Room not found' });
         const color = info?.color;
-        if (!color || !session.players[color]) return callback({ ok: false, error: 'Not in this game' });
+        if (!color || !session.players[color]) return safeCallback(callback, { ok: false, error: 'Not in this game' });
 
         const res = session.requestRematch(color);
-        if (!res.ok) return callback({ ok: false, error: res.error });
+        if (!res.ok) return safeCallback(callback, { ok: false, error: res.error });
 
         // 通知所有其他已入座玩家
-        const colors = isThreeSession(session) ? THREE_FACTIONS : ['red', 'black'];
+        const colors = seatsOf(session);
         for (const c of colors) {
           if (c === color) continue;
           const sid = session.players[c];
@@ -367,16 +427,19 @@ function createServer(options = {}) {
           session.resetForRematch();
           emitSessionState(useRoomId, session);
           io.to(useRoomId).emit('rematch_started', {});
-          callback({ ok: true, ready: true });
+          safeCallback(callback, { ok: true, ready: true });
         } else {
-          callback({ ok: true, ready: false });
+          safeCallback(callback, { ok: true, ready: false });
         }
       } catch (e) {
-        callback({ ok: false, error: e.message });
+        safeCallback(callback, { ok: false, error: e.message });
       }
     });
 
-    socket.on('leave_room', () => leaveRoom(socket));
+    socket.on('leave_room', (_payload, callback) => {
+      leaveRoom(socket);
+      safeCallback(callback, { ok: true });
+    });
 
     socket.on('disconnect', () => {
       console.log(`Client disconnected: ${socket.id}`);
@@ -386,7 +449,7 @@ function createServer(options = {}) {
         const session = rooms.get(info.roomId);
         if (session) {
           session.removePlayer(socket.id);
-          const colors = isThreeSession(session) ? THREE_FACTIONS : ['red', 'black'];
+          const colors = seatsOf(session);
           const anySeated = colors.some((c) => session.players[c]);
           if (anySeated) {
             // 仍有人在场：通知更新状态（三人模式可能继续，双人则结束）
