@@ -1,17 +1,10 @@
 name: Build Release Packages
 
-# Produces signed-optional installers that can't be built in a symlink-restricted
-# Windows environment (the local sandbox blocks winCodeSign's macOS .dylib
-# symlink extraction). Run this on CI (symlinks work fine here) to get the real
-# NSIS .exe (Windows) and .dmg (macOS).
-#
-# Trigger manually from the Actions tab, or on tag push.
-
 on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: Existing GitHub Release tag to receive the installers
+        description: Existing GitHub Release tag to receive the packages
         required: true
         default: v1.1.1
   push:
@@ -26,7 +19,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with: { node-version: 20 }
+        with: { node-version: 22 }
       - run: npm install
       - run: cd client && npm install
       - run: cd server && npm install
@@ -34,7 +27,7 @@ jobs:
       - name: Build self-contained Windows Web host
         run: npm run dist:web-host
       - run: npx electron-builder --win nsis --publish never
-      - name: Upload Windows installer to release
+      - name: Upload Windows packages to release
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
@@ -55,7 +48,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with: { node-version: 20 }
+        with: { node-version: 22 }
       - run: npm install
       - run: cd client && npm install
       - run: cd server && npm install
@@ -84,7 +77,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with: { node-version: 20 }
+        with: { node-version: 22 }
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
