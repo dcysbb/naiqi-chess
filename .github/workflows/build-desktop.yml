@@ -9,8 +9,16 @@ name: Build Desktop Installers
 
 on:
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing GitHub Release tag to receive the installers
+        required: true
+        default: v1.1.0
   push:
     tags: ['v*']
+
+permissions:
+  contents: write
 
 jobs:
   build-windows:
@@ -24,7 +32,13 @@ jobs:
       - run: cd server && npm install
       - run: npm run build
       - run: npx electron-builder --win nsis --publish never
+      - name: Upload Windows installer to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
+        run: gh release upload "$env:RELEASE_TAG" dist-desktop/*.exe --repo "${{ github.repository }}" --clobber
       - uses: actions/upload-artifact@v4
+        continue-on-error: true
         with:
           name: naiqi-windows-installer
           path: dist-desktop/*.exe
@@ -45,7 +59,13 @@ jobs:
           test -n "$APP_PATH"
           codesign --verify --deep --strict "$APP_PATH"
           codesign -dv --verbose=2 "$APP_PATH"
+      - name: Upload macOS packages to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
+        run: gh release upload "$RELEASE_TAG" dist-desktop/*.dmg dist-desktop/*.zip --repo "${{ github.repository }}" --clobber
       - uses: actions/upload-artifact@v4
+        continue-on-error: true
         with:
           name: naiqi-macos-universal
           path: |
