@@ -139,6 +139,33 @@ button {
   font-size: 24px;
 }
 
+.three-board-wrap {
+  width: min(900px, calc(100vw - 32px));
+  flex: 0 1 900px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+  background: #f5eedc;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.34);
+}
+
+.three-board-turn {
+  min-height: 38px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  background: #12232a;
+  color: #e27268;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.three-board-turn.is-active {
+  color: #5bd39a;
+}
+
 @media (max-width: 640px) {
   .app-header {
     min-height: 104px;
@@ -159,5 +186,9 @@ button {
 
   .room-card {
     padding: 22px 18px;
+  }
+
+  .three-board-wrap {
+    width: calc(100vw - 24px);
   }
 }

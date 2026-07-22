@@ -1,419 +1,398 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
+import {
+  THREE_FACTIONS, THREE_PIECE_CHARS, FACTION_COLORS, FACTION_LABELS,
+  ROWS, COLS, PALACE,
+} from '../game/three/constants.js';
 
-const CELL = 54;
-const MARGIN = 36;
-const RADIUS = 22;
+const SIZE = 900;
+const CENTER = { x: SIZE / 2, y: SIZE / 2 };
+const OUTER_RADIUS = 374;
+const FRONT_RADIUS = 330;
+const CENTER_GAP = 45;
+const BACK_SPAN = 42 * Math.PI / 180;
+const FRONT_SPAN = 54 * Math.PI / 180;
+const RADIUS = 20;
+// Array order is clockwise, matching the server's turn/river mapping.
+const FACTION_ANGLES = { wei: 0, shu: 240, wu: 120 };
 
-const PIECE_CHARS = {
-  general: { wei: '帥', shu: '将', wu: '王' },
-  advisor: { wei: '仕', shu: '士', wu: '士' },
-  elephant: { wei: '相', shu: '象', wu: '象' },
-  horse: { wei: '傌', shu: '馬', wu: '駒' },
-  chariot: { wei: '俥', shu: '車', wu: '車' },
-  cannon: { wei: '炮', shu: '砲', wu: '砲' },
-  pawn: { wei: '兵', shu: '卒', wu: '卒' },
-};
-
-const FACTION_COLORS = { wei: '#c0392b', shu: '#2c3e50', wu: '#27ae60' };
-const FACTION_LABELS = { wei: '魏', shu: '蜀', wu: '吴' };
-const FACTION_ANGLES = { wei: 0, shu: 120, wu: 240 }; // 阵营朝向（度）
-const ROWS = 6;
-const COLS = 9;
-const PALACE = { rowMin: 0, rowMax: 2, colMin: 3, colMax: 5 };
-
-// 阵营局部坐标 → 旋转到画布
-// 局部：原点在本阵后方中点(0,4)，x=col方向，y=row方向（朝中心）
-// 阵营旋转角 = 阵营朝向；再整体旋转使"我方阵营"在底部。
-function localToCanvas(faction, row, col, center, viewerFaction) {
-  const lx = (col - 4) * CELL;
-  const ly = row * CELL;
-  const factionAngle = (FACTION_ANGLES[faction] - FACTION_ANGLES[viewerFaction]) * Math.PI / 180;
-  const cos = Math.cos(factionAngle);
-  const sin = Math.sin(factionAngle);
-  const x = center.x + lx * cos - ly * sin;
-  const y = center.y + lx * sin + ly * cos;
-  return { x, y, angle: factionAngle };
+function isFaction(value) {
+  return Object.prototype.hasOwnProperty.call(FACTION_ANGLES, value);
 }
 
-function drawBoard(ctx, center, viewerFaction, width, height) {
-  ctx.fillStyle = '#e8d5a0';
-  ctx.fillRect(0, 0, width, height);
-  ctx.strokeStyle = '#5a4a2a';
-  ctx.lineWidth = 1.5;
+function polar(radius, angle) {
+  return { x: CENTER.x + Math.cos(angle) * radius, y: CENTER.y + Math.sin(angle) * radius };
+}
 
-  const factions = ['wei', 'shu', 'wu'];
-  for (const f of factions) {
-    drawFactionGrid(ctx, f, center, viewerFaction);
-  }
+function lerp(a, b, amount) {
+  return { x: a.x + (b.x - a.x) * amount, y: a.y + (b.y - a.y) * amount };
+}
 
-  // 中心节点
-  ctx.fillStyle = '#f4e4b8';
-  ctx.strokeStyle = '#5a4a2a';
-  ctx.lineWidth = 2;
-  drawHexagon(ctx, center.x, center.y, 16);
+function sectorGeometry(faction, viewerFaction) {
+  const factionAngle = FACTION_ANGLES[faction] ?? 0;
+  const viewerAngle = FACTION_ANGLES[viewerFaction] ?? 0;
+  const outward = Math.PI / 2 + (factionAngle - viewerAngle) * Math.PI / 180;
+  return {
+    outward,
+    apex: polar(CENTER_GAP, outward),
+    leftOuter: polar(OUTER_RADIUS, outward + BACK_SPAN),
+    rightOuter: polar(OUTER_RADIUS, outward - BACK_SPAN),
+    leftFront: polar(FRONT_RADIUS, outward + FRONT_SPAN),
+    rightFront: polar(FRONT_RADIUS, outward - FRONT_SPAN),
+  };
+}
+
+// Each faction is a fish-tail half-board: its back rank is a straight outer
+// edge and its river rank folds from both banks into the central Y junction.
+function nodePosition(faction, row, col, viewerFaction) {
+  const safeFaction = isFaction(faction) ? faction : 'wei';
+  const safeViewer = isFaction(viewerFaction) ? viewerFaction : 'wei';
+  const safeRow = Math.max(0, Math.min(ROWS - 1, Number(row) || 0));
+  const safeCol = Math.max(0, Math.min(COLS - 1, Number(col) || 0));
+  const geometry = sectorGeometry(safeFaction, safeViewer);
+  const u = (safeCol - 4) / 4;
+  const back = lerp(geometry.leftOuter, geometry.rightOuter, (u + 1) / 2);
+  const front = u <= 0
+    ? lerp(geometry.apex, geometry.leftFront, -u)
+    : lerp(geometry.apex, geometry.rightFront, u);
+  return lerp(back, front, safeRow / (ROWS - 1));
+}
+
+function pathThrough(ctx, points, close = false) {
+  if (!points.length) return;
+  ctx.beginPath();
+  ctx.moveTo(points[0].x, points[0].y);
+  for (let i = 1; i < points.length; i++) ctx.lineTo(points[i].x, points[i].y);
+  if (close) ctx.closePath();
+}
+
+function drawBoard(ctx, viewerFaction) {
+  ctx.fillStyle = '#f5eedc';
+  ctx.fillRect(0, 0, SIZE, SIZE);
+
+  const outline = THREE_FACTIONS
+    .flatMap((faction) => {
+      const geometry = sectorGeometry(faction, viewerFaction);
+      return [geometry.leftOuter, geometry.rightOuter];
+    })
+    .sort((a, b) => Math.atan2(a.y - CENTER.y, a.x - CENTER.x) - Math.atan2(b.y - CENTER.y, b.x - CENTER.x));
+  pathThrough(ctx, outline, true);
+  ctx.fillStyle = '#f0dfb7';
   ctx.fill();
+  ctx.strokeStyle = '#342f28';
+  ctx.lineWidth = 3;
   ctx.stroke();
 
-  // 河界（Y形，浅蓝）
-  drawRivers(ctx, center, viewerFaction);
+  drawRiverBands(ctx, viewerFaction);
 
-  // 阵营大字
-  for (const f of factions) {
-    drawFactionLabel(ctx, f, center, viewerFaction);
-  }
+  ctx.strokeStyle = '#474139';
+  ctx.lineWidth = 1.45;
+  for (const faction of THREE_FACTIONS) drawFactionGrid(ctx, faction, viewerFaction);
+  drawRiverConnections(ctx, viewerFaction);
+  drawOuterCoordinates(ctx, viewerFaction);
+  drawRiverLabels(ctx, viewerFaction);
+  drawFactionLabels(ctx, viewerFaction);
 }
 
-function drawFactionGrid(ctx, faction, center, viewerFaction) {
-  // 横线
-  for (let r = 0; r < ROWS; r++) {
-    const a = localToCanvas(faction, r, 0, center, viewerFaction);
-    const b = localToCanvas(faction, r, COLS - 1, center, viewerFaction);
-    ctx.beginPath();
-    ctx.moveTo(a.x, a.y);
-    ctx.lineTo(b.x, b.y);
+function drawRiverBands(ctx, viewerFaction) {
+  for (let i = 0; i < THREE_FACTIONS.length; i++) {
+    const faction = THREE_FACTIONS[i];
+    const next = THREE_FACTIONS[(i + 1) % THREE_FACTIONS.length];
+    const bankA = Array.from({ length: 5 }, (_, offset) => nodePosition(faction, ROWS - 1, 4 + offset, viewerFaction));
+    const bankB = Array.from({ length: 5 }, (_, offset) => nodePosition(next, ROWS - 1, offset, viewerFaction));
+    pathThrough(ctx, [...bankA, ...bankB], true);
+    ctx.fillStyle = 'rgba(190, 218, 219, 0.82)';
+    ctx.fill();
+    ctx.strokeStyle = '#668d96';
+    ctx.lineWidth = 1.4;
     ctx.stroke();
   }
-  // 纵线
-  for (let c = 0; c < COLS; c++) {
-    const a = localToCanvas(faction, 0, c, center, viewerFaction);
-    const b = localToCanvas(faction, ROWS - 1, c, center, viewerFaction);
-    ctx.beginPath();
-    ctx.moveTo(a.x, a.y);
-    ctx.lineTo(b.x, b.y);
+
+  const centerTriangle = THREE_FACTIONS.map((faction) => sectorGeometry(faction, viewerFaction).apex);
+  pathThrough(ctx, centerTriangle, true);
+  ctx.fillStyle = '#d9e9e7';
+  ctx.fill();
+  ctx.strokeStyle = '#668d96';
+  ctx.stroke();
+}
+
+function drawFactionGrid(ctx, faction, viewerFaction) {
+  for (let row = 0; row < ROWS; row++) {
+    const points = Array.from({ length: COLS }, (_, col) => nodePosition(faction, row, col, viewerFaction));
+    pathThrough(ctx, points);
     ctx.stroke();
   }
-  // 九宫米字
-  const p1 = localToCanvas(faction, PALACE.rowMin, PALACE.colMin, center, viewerFaction);
-  const p2 = localToCanvas(faction, PALACE.rowMax, PALACE.colMax, center, viewerFaction);
-  const p3 = localToCanvas(faction, PALACE.rowMin, PALACE.colMax, center, viewerFaction);
-  const p4 = localToCanvas(faction, PALACE.rowMax, PALACE.colMin, center, viewerFaction);
+  for (let col = 0; col < COLS; col++) {
+    const points = Array.from({ length: ROWS }, (_, row) => nodePosition(faction, row, col, viewerFaction));
+    pathThrough(ctx, points);
+    ctx.stroke();
+  }
+
+  const p1 = nodePosition(faction, PALACE.rowMin, PALACE.colMin, viewerFaction);
+  const p2 = nodePosition(faction, PALACE.rowMax, PALACE.colMax, viewerFaction);
+  const p3 = nodePosition(faction, PALACE.rowMin, PALACE.colMax, viewerFaction);
+  const p4 = nodePosition(faction, PALACE.rowMax, PALACE.colMin, viewerFaction);
   ctx.beginPath();
   ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y);
   ctx.moveTo(p3.x, p3.y); ctx.lineTo(p4.x, p4.y);
   ctx.stroke();
 
-  // 1-9 数字标注（后方边缘 row 0 下方）
-  ctx.fillStyle = '#5a4a2a';
-  ctx.font = 'bold 11px serif';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  for (let c = 0; c < COLS; c++) {
-    const pos = localToCanvas(faction, -0.5, c, center, viewerFaction);
-    ctx.save();
-    ctx.translate(pos.x, pos.y);
-    ctx.rotate(FACTION_ANGLES[faction] - FACTION_ANGLES[viewerFaction]);
-    ctx.fillText(String(c + 1), 0, 0);
-    ctx.restore();
+  for (const [row, columns] of [[2, [1, 7]], [3, [0, 2, 4, 6, 8]]]) {
+    for (const col of columns) drawPlacementMark(ctx, nodePosition(faction, row, col, viewerFaction));
   }
 }
 
-function drawHexagon(ctx, cx, cy, r) {
+function drawPlacementMark(ctx, point) {
+  const inner = 7;
+  const outer = 13;
+  ctx.save();
+  ctx.strokeStyle = '#756d61';
+  ctx.lineWidth = 1.2;
   ctx.beginPath();
-  for (let i = 0; i < 6; i++) {
-    const a = (Math.PI / 3) * i - Math.PI / 6;
-    const x = cx + r * Math.cos(a);
-    const y = cy + r * Math.sin(a);
-    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  for (const sx of [-1, 1]) {
+    for (const sy of [-1, 1]) {
+      ctx.moveTo(point.x + sx * inner, point.y + sy * outer);
+      ctx.lineTo(point.x + sx * inner, point.y + sy * inner);
+      ctx.lineTo(point.x + sx * outer, point.y + sy * inner);
+    }
   }
-  ctx.closePath();
+  ctx.stroke();
+  ctx.restore();
 }
 
-// Y形河界：三条浅蓝带，在每两个阵营之间。
-function drawRivers(ctx, center, viewerFaction) {
+function drawRiverConnections(ctx, viewerFaction) {
   ctx.save();
-  ctx.fillStyle = 'rgba(86, 180, 233, 0.35)';
-  ctx.strokeStyle = '#2c7fa6';
-  ctx.lineWidth = 1.5;
-  // 每条河界画在"两个相邻阵营的交界"——简化为三个粗短带从中心向外
-  const factions = ['wei', 'shu', 'wu'];
-  for (let i = 0; i < 3; i++) {
-    const f1 = factions[i];
-    const f2 = factions[(i + 1) % 3];
-    // 中点在两阵营夹角的中分线、距中心约 ROWS*CELL*0.6
-    const midAngle = ((FACTION_ANGLES[f1] + FACTION_ANGLES[f2]) / 2 - FACTION_ANGLES[viewerFaction]) * Math.PI / 180;
-    const dist = ROWS * CELL * 0.5;
-    const bx = center.x + Math.cos(midAngle - Math.PI / 2) * dist;
-    const by = center.y + Math.sin(midAngle - Math.PI / 2) * dist;
-    // 简化：画一个椭圆
+  ctx.strokeStyle = '#474139';
+  ctx.lineWidth = 1.35;
+  for (let i = 0; i < THREE_FACTIONS.length; i++) {
+    const faction = THREE_FACTIONS[i];
+    const next = THREE_FACTIONS[(i + 1) % THREE_FACTIONS.length];
+    for (let col = 5; col < COLS; col++) {
+      const a = nodePosition(faction, ROWS - 1, col, viewerFaction);
+      const b = nodePosition(next, ROWS - 1, COLS - 1 - col, viewerFaction);
+      ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+    }
+  }
+
+  ctx.setLineDash([6, 6]);
+  ctx.lineWidth = 1.7;
+  for (const faction of THREE_FACTIONS) {
+    const apex = nodePosition(faction, ROWS - 1, 4, viewerFaction);
+    ctx.beginPath(); ctx.moveTo(apex.x, apex.y); ctx.lineTo(CENTER.x, CENTER.y); ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawOuterCoordinates(ctx, viewerFaction) {
+  ctx.save();
+  ctx.fillStyle = '#28251f';
+  ctx.font = '600 17px system-ui, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  for (const faction of THREE_FACTIONS) {
+    for (let col = 0; col < COLS; col++) {
+      const point = nodePosition(faction, 0, col, viewerFaction);
+      const dx = point.x - CENTER.x;
+      const dy = point.y - CENTER.y;
+      const length = Math.hypot(dx, dy) || 1;
+      ctx.fillText(String(COLS - col), point.x + dx / length * 24, point.y + dy / length * 24);
+    }
+  }
+  ctx.restore();
+}
+
+function drawRiverLabels(ctx, viewerFaction) {
+  ctx.save();
+  ctx.fillStyle = '#385f68';
+  ctx.font = '600 15px serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  for (let i = 0; i < THREE_FACTIONS.length; i++) {
+    const faction = THREE_FACTIONS[i];
+    const next = THREE_FACTIONS[(i + 1) % THREE_FACTIONS.length];
+    const a = nodePosition(faction, ROWS - 1, 7, viewerFaction);
+    const b = nodePosition(next, ROWS - 1, 1, viewerFaction);
+    const point = lerp(a, b, 0.5);
+    const apex = lerp(sectorGeometry(faction, viewerFaction).apex, sectorGeometry(next, viewerFaction).apex, 0.5);
+    const angle = Math.atan2(point.y - apex.y, point.x - apex.x);
     ctx.save();
-    ctx.translate(bx, by);
-    ctx.rotate(midAngle);
-    ctx.beginPath();
-    ctx.ellipse(0, 0, CELL * 1.5, 14, 0, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.stroke();
+    ctx.translate(point.x, point.y);
+    ctx.rotate(angle);
+    ctx.fillText('河  界', 0, 0);
     ctx.restore();
   }
   ctx.restore();
 }
 
-function drawFactionLabel(ctx, faction, center, viewerFaction) {
-  // 大字在阵营后方中点下方
-  const pos = localToCanvas(faction, -1.5, 4, center, viewerFaction);
+function drawFactionLabels(ctx, viewerFaction) {
+  for (const faction of THREE_FACTIONS) {
+    const point = nodePosition(faction, 1.35, 4, viewerFaction);
+    ctx.save();
+    ctx.translate(point.x, point.y);
+    ctx.rotate((FACTION_ANGLES[faction] - FACTION_ANGLES[viewerFaction]) * Math.PI / 180);
+    ctx.fillStyle = FACTION_COLORS[faction];
+    ctx.globalAlpha = 0.34;
+    ctx.font = '700 58px serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(FACTION_LABELS[faction], 0, 0);
+    ctx.restore();
+  }
+}
+
+function positionForKey(key, viewerFaction) {
+  const [faction, row, col] = String(key).split(':');
+  if (!isFaction(faction) || !Number.isFinite(Number(row)) || !Number.isFinite(Number(col))) return null;
+  return nodePosition(faction, Number(row), Number(col), viewerFaction);
+}
+
+function drawPiece(ctx, cell, viewerFaction, selected) {
+  const point = positionForKey(cell.key, viewerFaction);
+  if (!point) return;
   ctx.save();
-  ctx.translate(pos.x, pos.y);
-  ctx.rotate((FACTION_ANGLES[faction] - FACTION_ANGLES[viewerFaction]) * Math.PI / 180);
-  ctx.fillStyle = FACTION_COLORS[faction];
-  ctx.globalAlpha = 0.18;
-  ctx.font = 'bold 80px serif';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(FACTION_LABELS[faction], 0, 0);
+  if (selected) { ctx.shadowColor = '#f1c40f'; ctx.shadowBlur = 14; }
+  const color = FACTION_COLORS[cell.faction || cell.owner] || '#333';
+  const gradient = ctx.createRadialGradient(point.x - 6, point.y - 7, 3, point.x, point.y, RADIUS);
+  if (cell.hidden) {
+    gradient.addColorStop(0, '#697681'); gradient.addColorStop(1, '#202632');
+  } else {
+    gradient.addColorStop(0, '#fffdf5'); gradient.addColorStop(1, '#e9d7b4');
+  }
+  ctx.fillStyle = gradient;
+  ctx.beginPath(); ctx.arc(point.x, point.y, RADIUS, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = color; ctx.lineWidth = 2.2; ctx.stroke();
+  ctx.fillStyle = cell.hidden ? '#fff' : color;
+  ctx.font = cell.hidden ? '700 16px serif' : '700 22px serif';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  const character = cell.hidden ? '?' : THREE_PIECE_CHARS[cell.piece]?.[cell.faction] || '?';
+  ctx.fillText(character, point.x, point.y + 1);
   ctx.restore();
 }
 
-function drawPiece(ctx, cell, center, viewerFaction, isSelected) {
-  let pos;
-  let faction = cell.faction || cell.owner;
-  if (cell.key === 'center') {
-    pos = { x: center.x, y: center.y, angle: 0 };
-  } else {
-    const [f, row, col] = cell.key.split(':');
-    pos = localToCanvas(f, Number(row), Number(col), center, viewerFaction);
-    faction = f;
-  }
-
-  if (isSelected) {
-    ctx.shadowColor = '#FFD700';
-    ctx.shadowBlur = 12;
-  }
-
-  if (cell.hidden) {
-    const grad = ctx.createRadialGradient(pos.x - 3, pos.y - 3, 2, pos.x, pos.y, RADIUS);
-    grad.addColorStop(0, '#5a6a7a');
-    grad.addColorStop(1, '#1a1a2e');
-    ctx.fillStyle = grad;
+function drawHighlights(ctx, highlights, viewerFaction) {
+  for (const highlight of highlights) {
+    const point = positionForKey(highlight.key, viewerFaction);
+    if (!point) continue;
     ctx.beginPath();
-    ctx.arc(pos.x, pos.y, RADIUS, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.strokeStyle = FACTION_COLORS[cell.owner] || '#6f7782';
-    ctx.lineWidth = 2;
-    ctx.stroke();
-    ctx.fillStyle = 'rgba(255,255,255,0.75)';
-    ctx.font = 'bold 16px serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText('?', pos.x, pos.y + 1);
-  } else {
-    const color = FACTION_COLORS[cell.faction] || '#333';
-    const bgGrad = ctx.createRadialGradient(pos.x - 2, pos.y - 2, 2, pos.x, pos.y, RADIUS);
-    bgGrad.addColorStop(0, '#fffef5');
-    bgGrad.addColorStop(1, cell.faction === 'wei' ? '#fde8e8' : cell.faction === 'wu' ? '#e8f5e8' : '#e8e8f0');
-    ctx.fillStyle = bgGrad;
-    ctx.beginPath();
-    ctx.arc(pos.x, pos.y, RADIUS, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.strokeStyle = color;
-    ctx.lineWidth = 2;
-    ctx.stroke();
-    ctx.fillStyle = color;
-    ctx.font = `bold ${RADIUS * 1.1}px serif`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    const ch = PIECE_CHARS[cell.piece]?.[cell.faction] || '?';
-    ctx.fillText(ch, pos.x, pos.y + 1);
-  }
-  ctx.shadowColor = 'transparent';
-  ctx.shadowBlur = 0;
-}
-
-function drawHighlights(ctx, highlights, center, viewerFaction) {
-  for (const h of highlights) {
-    let pos;
-    if (h.key === 'center') {
-      pos = { x: center.x, y: center.y };
+    if (highlight.isCapture) {
+      ctx.strokeStyle = 'rgba(196, 49, 42, 0.9)'; ctx.lineWidth = 3;
+      ctx.arc(point.x, point.y, RADIUS + 5, 0, Math.PI * 2); ctx.stroke();
     } else {
-      const [f, row, col] = h.key.split(':');
-      pos = localToCanvas(f, Number(row), Number(col), center, viewerFaction);
-    }
-    if (h.isCapture) {
-      ctx.strokeStyle = 'rgba(220, 50, 50, 0.85)';
-      ctx.lineWidth = 3;
-      ctx.beginPath();
-      ctx.arc(pos.x, pos.y, RADIUS + 4, 0, Math.PI * 2);
-      ctx.stroke();
-    } else {
-      ctx.fillStyle = 'rgba(60, 150, 90, 0.7)';
-      ctx.beginPath();
-      ctx.arc(pos.x, pos.y, 7, 0, Math.PI * 2);
-      ctx.fill();
+      ctx.fillStyle = 'rgba(38, 135, 82, 0.78)';
+      ctx.arc(point.x, point.y, 7, 0, Math.PI * 2); ctx.fill();
     }
   }
 }
 
-function drawLastMove(ctx, moveResult, center, viewerFaction) {
+function drawLastMove(ctx, moveResult, viewerFaction) {
   const move = moveResult?.move || moveResult;
   if (!move) return;
   const keys = move.type === 'flip' ? [move.key] : [move.fromKey, move.toKey];
   for (const key of keys) {
-    if (!key) continue;
-    let pos;
-    if (key === 'center') {
-      pos = { x: center.x, y: center.y };
-    } else {
-      const [f, row, col] = key.split(':');
-      pos = localToCanvas(f, Number(row), Number(col), center, viewerFaction);
-    }
-    ctx.fillStyle = 'rgba(255, 215, 0, 0.35)';
-    ctx.beginPath();
-    ctx.arc(pos.x, pos.y, RADIUS + 2, 0, Math.PI * 2);
-    ctx.fill();
+    const point = positionForKey(key, viewerFaction);
+    if (!point) continue;
+    ctx.fillStyle = 'rgba(243, 190, 35, 0.34)';
+    ctx.beginPath(); ctx.arc(point.x, point.y, RADIUS + 4, 0, Math.PI * 2); ctx.fill();
   }
 }
 
-// 生成棋盘上所有节点（含空格），用于点击命中。每阵营 6×9 + center。
-function allNodes(center, viewerFaction) {
+function allNodes(viewerFaction) {
   const nodes = [];
-  for (const f of ['wei', 'shu', 'wu']) {
-    for (let r = 0; r < ROWS; r++) {
-      for (let c = 0; c < COLS; c++) {
-        const pos = localToCanvas(f, r, c, center, viewerFaction);
-        nodes.push({ key: `${f}:${r}:${c}`, x: pos.x, y: pos.y });
+  for (const faction of THREE_FACTIONS) {
+    for (let row = 0; row < ROWS; row++) {
+      for (let col = 0; col < COLS; col++) {
+        nodes.push({ key: `${faction}:${row}:${col}`, ...nodePosition(faction, row, col, viewerFaction) });
       }
     }
   }
-  nodes.push({ key: 'center', x: center.x, y: center.y });
   return nodes;
 }
 
-// 像素 → cellKey：遍历所有棋盘节点找最近（覆盖空格，确保可点击）。
-function getClickedCell(event, canvas, center, viewerFaction, width, height) {
-  const rect = canvas.getBoundingClientRect();
-  const scaleX = width / rect.width;
-  const scaleY = height / rect.height;
-  const x = (event.clientX - rect.left) * scaleX;
-  const y = (event.clientY - rect.top) * scaleY;
-
-  const nodes = allNodes(center, viewerFaction);
+function getClickedCell(event, canvas, viewerFaction) {
+  const rect = canvas?.getBoundingClientRect();
+  if (!rect || !Number.isFinite(rect.width) || !Number.isFinite(rect.height) || rect.width <= 0 || rect.height <= 0) return null;
+  const x = (event.clientX - rect.left) * SIZE / rect.width;
+  const y = (event.clientY - rect.top) * SIZE / rect.height;
   let best = null;
-  let bestDist = (RADIUS + 8) * (RADIUS + 8);
-  for (const node of nodes) {
-    const dx = x - node.x;
-    const dy = y - node.y;
-    const d = dx * dx + dy * dy;
-    if (d < bestDist) {
-      bestDist = d;
-      best = node.key;
-    }
+  let bestDistance = (RADIUS + 10) ** 2;
+  for (const node of allNodes(viewerFaction)) {
+    const distance = (x - node.x) ** 2 + (y - node.y) ** 2;
+    if (distance < bestDistance) { best = node.key; bestDistance = distance; }
   }
-  return best ? { key: best } : null;
+  return best;
 }
 
 export default function ThreeBoard({ gameState, myColor, socket, gameOver, moveResult }) {
   const canvasRef = useRef(null);
   const [selected, setSelected] = useState(null);
   const [highlights, setHighlights] = useState([]);
-
   const cells = gameState?.cells || [];
-  const isGameActive = gameState?.status === 'playing';
-  const isMyTurn = gameState?.currentTurn === myColor && isGameActive && !gameOver;
+  const viewerFaction = isFaction(myColor) ? myColor : isFaction(gameState?.yourFaction) ? gameState.yourFaction : 'wei';
+  const isMyTurn = gameState?.status === 'playing' && gameState.currentTurn === viewerFaction && !gameOver;
 
-  // 画布尺寸：以中心为原点，需容纳三阵营展开
-  const reach = ROWS * CELL + MARGIN + 40;
-  const width = (reach + 30) * 2;
-  const height = (reach + 30) * 2;
-  const center = { x: width / 2, y: height / 2 };
-
-  useEffect(() => {
-    setSelected(null);
-    setHighlights([]);
-  }, [gameState?.currentTurn, gameState?.status]);
+  useEffect(() => { setSelected(null); setHighlights([]); }, [gameState?.currentTurn, gameState?.status]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas) return;
+    if (!canvas || gameState?.boardSchema !== 'three-135-v1') return;
     const ctx = canvas.getContext('2d');
-    ctx.clearRect(0, 0, width, height);
-    drawBoard(ctx, center, myColor, width, height);
-    drawLastMove(ctx, moveResult, center, myColor);
-    drawHighlights(ctx, highlights, center, myColor);
-
-    for (const cell of cells) {
-      drawPiece(ctx, cell, center, myColor, selected === cell.key);
-    }
-  }, [cells, center, height, highlights, myColor, moveResult, selected, width]);
+    ctx.clearRect(0, 0, SIZE, SIZE);
+    drawBoard(ctx, viewerFaction);
+    drawLastMove(ctx, moveResult, viewerFaction);
+    drawHighlights(ctx, highlights, viewerFaction);
+    for (const cell of cells) drawPiece(ctx, cell, viewerFaction, selected === cell.key);
+  }, [cells, gameState?.boardSchema, highlights, moveResult, selected, viewerFaction]);
 
   const selectPiece = useCallback((key) => {
-    const cell = cells.find((c) => c.key === key);
-    if (!cell || cell.owner !== myColor) {
-      setSelected(null);
-      setHighlights([]);
-      return;
+    const cell = cells.find((candidate) => candidate.key === key);
+    if (!cell || cell.owner !== viewerFaction || (gameState.isDark && cell.hidden)) {
+      setSelected(null); setHighlights([]); return;
     }
-    if (gameState.isDark && cell.hidden) {
-      setSelected(null);
-      setHighlights([]);
-      return;
-    }
-    socket.emit('get_three_moves', { key }, (res) => {
-      if (!res?.ok) {
-        setSelected(null);
-        setHighlights([]);
-        return;
-      }
+    socket.emit('get_three_moves', { key }, (response) => {
+      if (!response?.ok) { setSelected(null); setHighlights([]); return; }
       setSelected(key);
-      setHighlights((res.moves || []).map((m) => ({
-        ...m,
-        isCapture: Boolean(cells.find((c) => c.key === m.key)?.piece),
+      setHighlights((response.moves || []).map((move) => ({
+        ...move, isCapture: Boolean(cells.find((candidate) => candidate.key === move.key)?.piece),
       })));
     });
-  }, [cells, gameState, myColor, socket]);
+  }, [cells, gameState, socket, viewerFaction]);
 
   const handleCanvasClick = useCallback((event) => {
     if (!isMyTurn || cells.length === 0) return;
-    const clicked = getClickedCell(event, canvasRef.current, center, myColor, width, height);
-    if (!clicked) {
-      setSelected(null);
-      setHighlights([]);
-      return;
-    }
-    const cell = cells.find((c) => c.key === clicked.key);
-    const targetMove = selected && highlights.find((h) => h.key === clicked.key);
-
+    const key = getClickedCell(event, canvasRef.current, viewerFaction);
+    if (!key) { setSelected(null); setHighlights([]); return; }
+    const cell = cells.find((candidate) => candidate.key === key);
+    const targetMove = selected && highlights.find((move) => move.key === key);
     if (selected && targetMove) {
-      socket.emit('make_three_move', { fromKey: selected, toKey: clicked.key }, (res) => {
-        if (!res?.ok) console.warn('Move rejected:', res?.error);
+      socket.emit('make_three_move', { fromKey: selected, toKey: key }, (response) => {
+        if (!response?.ok) console.warn('Move rejected:', response?.error);
       });
-      setSelected(null);
-      setHighlights([]);
-      return;
+      setSelected(null); setHighlights([]); return;
     }
-
-    if (gameState?.isDark && cell?.hidden && cell.owner === myColor) {
-      socket.emit('flip_three_piece', { key: clicked.key }, (res) => {
-        if (!res?.ok) console.warn('Flip rejected:', res?.error);
+    if (gameState?.isDark && cell?.hidden && cell.owner === viewerFaction) {
+      socket.emit('flip_three_piece', { key }, (response) => {
+        if (!response?.ok) console.warn('Flip rejected:', response?.error);
       });
-      setSelected(null);
-      setHighlights([]);
-      return;
+      setSelected(null); setHighlights([]); return;
     }
-
-    selectPiece(clicked.key);
-  }, [cells, center, gameState, highlights, isMyTurn, myColor, selectPiece, selected, socket, width]);
+    selectPiece(key);
+  }, [cells, gameState, highlights, isMyTurn, selectPiece, selected, socket, viewerFaction]);
 
   if (!gameState) return null;
+  if (gameState.boardSchema !== 'three-135-v1') {
+    return <div style={{ padding: 24, color: '#f2c94c' }}>主机版本过旧，请将主机和客户端都升级到 v1.2.0。</div>;
+  }
 
   return (
-    <div style={{ position: 'relative' }}>
+    <div className="three-board-wrap">
       <canvas
         ref={canvasRef}
-        width={width}
-        height={height}
+        width={SIZE}
+        height={SIZE}
         onClick={handleCanvasClick}
-        style={{
-          cursor: isMyTurn ? 'pointer' : 'default',
-          maxWidth: '100%',
-          height: 'auto',
-          borderRadius: '8px',
-          boxShadow: '0 4px 20px rgba(0,0,0,0.4)',
-        }}
+        aria-label="三人象棋棋盘"
+        style={{ cursor: isMyTurn ? 'pointer' : 'default', width: '100%', height: 'auto', display: 'block' }}
       />
-      <div style={{
-        textAlign: 'center',
-        marginTop: '8px',
-        fontSize: '14px',
-        color: isMyTurn ? '#2ecc71' : '#e74c3c',
-      }}>
+      <div className={`three-board-turn ${isMyTurn ? 'is-active' : ''}`}>
         {gameOver ? '游戏结束' : isMyTurn ? (gameState.isDark ? '轮到你翻/走' : '轮到你走') : '等待对手...'}
       </div>
     </div>

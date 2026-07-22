@@ -50,6 +50,33 @@ function isValidColor(session, color) {
 const DEFAULT_PORT = process.env.PORT ? Number(process.env.PORT) : 3030;
 const SERVICE_TYPE = 'chess';
 
+function getLanAddresses() {
+  const addresses = [];
+  const seen = new Set();
+  const virtualPattern = /virtual|vethernet|wsl|hyper-v|vmware|virtualbox|vpn|tun|tap|docker|nat|loopback|pseudo/i;
+  for (const [name, entries] of Object.entries(os.networkInterfaces())) {
+    for (const entry of entries || []) {
+      const isIpv4 = entry.family === 'IPv4' || entry.family === 4;
+      if (!isIpv4 || entry.internal || !entry.address) continue;
+      if (entry.address.startsWith('169.254.')) continue;
+      if (seen.has(entry.address)) continue;
+      seen.add(entry.address);
+      const physicalPriority = /wi-?fi|wlan|wireless|无线/i.test(name)
+        ? 0
+        : /ethernet|以太网/i.test(name) && !virtualPattern.test(name)
+          ? 1
+          : virtualPattern.test(name)
+            ? 3
+            : 2;
+      addresses.push({ address: entry.address, physicalPriority });
+    }
+  }
+  return addresses
+    .sort((a, b) => a.physicalPriority - b.physicalPriority
+      || a.address.localeCompare(b.address, undefined, { numeric: true }))
+    .map((entry) => entry.address);
+}
+
 function generateHostId() {
   const host = os.hostname() || 'chess-host';
   return host.replace(/[^a-zA-Z0-9]/g, '').slice(0, 12) || 'host';
@@ -137,14 +164,15 @@ function createServer(options = {}) {
     if (info && info.roomId) {
       const session = rooms.get(info.roomId);
       socket.leave(info.roomId);
-      if (session && info.color) {
-        session.removePlayer(socket.id);
+      if (session) {
+        if (info.color) session.removePlayer(socket.id);
         const colors = seatsOf(session);
         const seatedColors = colors.filter((c) => session.players[c]);
         if (seatedColors.length > 0) {
           emitSessionState(info.roomId, session);
-          io.to(info.roomId).emit('opponent_left', { color: info.color });
+          if (info.color) io.to(info.roomId).emit('opponent_left', { color: info.color });
         } else {
+          // The creator may leave before choosing a seat; remove that empty room too.
           rooms.delete(info.roomId);
         }
       }
@@ -155,9 +183,14 @@ function createServer(options = {}) {
 
   // Health/info endpoint used by LAN discovery probes (no socket handshake needed).
   app.get('/__chess_info__', (_req, res) => {
+    const addresses = getLanAddresses();
     res.json({
       hostName: hostInfo.hostName,
       hostId: hostInfo.hostId,
+      port: hostInfo.port,
+      platform: process.platform,
+      addresses,
+      urls: addresses.map((address) => `http://${address}:${hostInfo.port}`),
       openRooms: getJoinableRooms().length,
       service: SERVICE_TYPE,
     });
@@ -509,6 +542,9 @@ if (require.main === module) {
   handle.httpServer.listen(DEFAULT_PORT, () => {
     console.log(`Chess server running on port ${DEFAULT_PORT}`);
     console.log(`Internal: http://localhost:${DEFAULT_PORT}`);
+    for (const address of getLanAddresses()) {
+      console.log(`LAN:      http://${address}:${DEFAULT_PORT}`);
+    }
     if (bonjour) {
       const mdns = new bonjour.Bonjour();
       handle.advertise(mdns);
@@ -519,4 +555,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { createServer, SERVICE_TYPE, DEFAULT_PORT };
+module.exports = { createServer, getLanAddresses, SERVICE_TYPE, DEFAULT_PORT };

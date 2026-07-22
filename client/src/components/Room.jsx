@@ -41,6 +41,21 @@ function manualHostUrl(input) {
   return `http://${host}:3030`;
 }
 
+async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch (_) {
+    const input = document.createElement('textarea');
+    input.value = text;
+    input.style.position = 'fixed';
+    input.style.opacity = '0';
+    document.body.appendChild(input);
+    input.select();
+    document.execCommand('copy');
+    input.remove();
+  }
+}
+
 export default function Room({
   onRoomCreated,
   onRoomJoined,
@@ -59,6 +74,8 @@ export default function Room({
   const [connectingHost, setConnectingHost] = useState(null);
   const [manualIp, setManualIp] = useState('');
   const [scanning, setScanning] = useState(false);
+  const [hostInfo, setHostInfo] = useState(null);
+  const [hostAddressCopied, setHostAddressCopied] = useState(false);
   const stopDiscoveryRef = useRef(null);
   const hostsRef = useRef(new Map());
   const stepRef = useRef(step);
@@ -99,16 +116,32 @@ export default function Room({
 
   // LAN host discovery: runs while on the 'choose' screen.
   const upsertHost = useCallback((host) => {
+    if (DEFAULT_URL && host.url?.replace(/\/+$/, '') === DEFAULT_URL.replace(/\/+$/, '')) return;
     hostsRef.current.set(host.hostId, host);
     setHosts(Array.from(hostsRef.current.values()));
   }, []);
 
+  const loadHostInfo = useCallback(async (url) => {
+    if (!url) return;
+    try {
+      const response = await fetch(`${url.replace(/\/+$/, '')}/__chess_info__`);
+      if (!response.ok) return;
+      const info = await response.json();
+      if (info?.service === 'chess') setHostInfo(info);
+    } catch (_) {
+      // Discovery and socket connection show their own errors when needed.
+    }
+  }, []);
+
+  useEffect(() => {
+    loadHostInfo(getCurrentUrl() || DEFAULT_URL);
+  }, [loadHostInfo]);
+
   useEffect(() => {
     if (step !== 'choose') return undefined;
-    setScanning(true);
     const stop = startDiscovery((host) => {
       upsertHost(host);
-    });
+    }, { onScanStateChange: setScanning });
     stopDiscoveryRef.current = stop;
     return () => {
       stop();
@@ -121,6 +154,7 @@ export default function Room({
     setError('');
     try {
       await connectTo(url);
+      await loadHostInfo(url);
       // After connecting, ask for the room list from this host.
       socket.emit('enter_lobby');
       setStep('choose'); // refresh room list for the new host
@@ -129,7 +163,15 @@ export default function Room({
     } finally {
       setConnectingHost(null);
     }
-  }, []);
+  }, [loadHostInfo]);
+
+  const handleCopyHostAddress = useCallback(async () => {
+    const url = hostInfo?.urls?.[0];
+    if (!url) return;
+    await copyText(url);
+    setHostAddressCopied(true);
+    window.setTimeout(() => setHostAddressCopied(false), 1600);
+  }, [hostInfo]);
 
   const handleManualConnect = useCallback(() => {
     const ip = manualIp.trim();
@@ -328,6 +370,29 @@ export default function Room({
 
         <button style={btnStyle('#e74c3c')} onClick={handleCreate}>创建房间</button>
 
+        {hostInfo?.urls?.length > 0 && (
+          <div style={{
+            marginTop: '16px', padding: '10px 12px', textAlign: 'left',
+            border: '1px solid rgba(46,204,113,0.38)', borderRadius: '8px',
+            background: 'rgba(46,204,113,0.1)',
+          }}>
+            <div style={{ fontSize: '13px', fontWeight: 700, color: '#7ee2a8' }}>Web 局域网主机已就绪</div>
+            <div style={{ fontSize: '12px', opacity: 0.78, marginTop: '4px', overflowWrap: 'anywhere' }}>
+              同一 Wi-Fi / 热点设备打开 {hostInfo.urls[0]}
+            </div>
+            <button
+              type="button"
+              onClick={handleCopyHostAddress}
+              style={{
+                marginTop: '8px', padding: '6px 10px', border: 'none', borderRadius: '6px',
+                background: hostAddressCopied ? '#27ae60' : '#3498db', color: '#fff', cursor: 'pointer',
+              }}
+            >
+              {hostAddressCopied ? '已复制' : '复制访问地址'}
+            </button>
+          </div>
+        )}
+
         {/* LAN host switcher (mobile/web clients join a desktop host on the LAN). */}
         <div style={{ marginTop: '18px', textAlign: 'left' }}>
           <div style={{
@@ -353,8 +418,8 @@ export default function Room({
                 color: '#fff', cursor: 'pointer',
               }}
             >
-              <div style={{ fontWeight: 700, fontSize: '13px' }}>本机主机 {getCurrentUrl() === DEFAULT_URL ? '✓' : ''}</div>
-              <div style={{ fontSize: '11px', opacity: 0.6 }}>{shortUrl(DEFAULT_URL)}（桌面 App 自带 / 本机服务器）</div>
+              <div style={{ fontWeight: 700, fontSize: '13px' }}>当前 Web 主机 {getCurrentUrl() === DEFAULT_URL ? '✓' : ''}</div>
+              <div style={{ fontSize: '11px', opacity: 0.6 }}>{shortUrl(DEFAULT_URL)}（此页面连接的服务器）</div>
             </button>
           )}
 

@@ -39,6 +39,7 @@ function runTest(file) {
 }
 
 const SUITES = [
+  'test_three_topology.js',
   'test_three.js',
   'test_elimination.js',
   'test_capture_general.js',

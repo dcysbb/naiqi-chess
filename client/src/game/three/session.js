@@ -40,7 +40,7 @@ export class ThreeGameSession {
         .forEach((p, i) => {
           this.board.set(keyOf(faction, p.row, p.col), {
             piece: arranged[i], faction,
-            hidden: this.isDark, crossedCenter: false, owner: faction,
+            hidden: this.isDark, crossedRiver: false, owner: faction,
           });
         });
     }
@@ -123,9 +123,9 @@ export class ThreeGameSession {
     }
 
     this.board.delete(fromKey);
-    const toInfo = toKey === 'center' ? { center: true } : parseKey(toKey);
-    const crossed = toKey === 'center' || (toInfo.faction && toInfo.faction !== faction);
-    const movedPiece = { ...fromCell, crossedCenter: fromCell.crossedCenter || crossed };
+    const toInfo = parseKey(toKey);
+    const crossed = toInfo.faction !== faction;
+    const movedPiece = { ...fromCell, crossedRiver: fromCell.crossedRiver || crossed };
     this.board.set(toKey, movedPiece);
 
     let gameOver = false; let winner = null; let reason = '';
@@ -178,12 +178,12 @@ export class ThreeGameSession {
   getPublicState(forFaction) {
     const cells = [];
     for (const [key, cell] of this.board.entries()) {
-      const info = { key, hidden: cell.hidden, owner: cell.owner, crossedCenter: cell.crossedCenter };
+      const info = { key, hidden: cell.hidden, owner: cell.owner, crossedRiver: cell.crossedRiver };
       if (!cell.hidden) { info.piece = cell.piece; info.faction = cell.faction; }
       cells.push(info);
     }
     return {
-      mode: this.mode, isThree: true, rows: ROWS, cols: COLS, cells,
+      mode: this.mode, isThree: true, boardSchema: 'three-135-v1', rows: ROWS, cols: COLS, cells,
       currentTurn: this.currentTurn, status: this.status,
       winner: this.winner, resultReason: this.resultReason,
       eliminated: Array.from(this.eliminated), yourFaction: forFaction,

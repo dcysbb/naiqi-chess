@@ -20,6 +20,25 @@ async function main() {
     });
   });
 
+  // ---------- 创建后未选阵营返回，也必须清理空房间 ----------
+  await new Promise((res) => {
+    const A = mk();
+    A.on('connect', () => {
+      A.emit('create_room', { mode: 'chaos' }, (created) => {
+        const rid = created.roomId;
+        A.emit('leave_room', {}, () => {
+          const B = mk();
+          B.on('connect', () => {
+            B.emit('join_room', { roomId: rid }, (joined) => {
+              ck('P0-2 未选阵营返回会清理空房间', !joined.ok && /not found/i.test(joined.error), joined.error);
+              A.disconnect(); B.disconnect(); res();
+            });
+          });
+        });
+      });
+    });
+  });
+
   // ---------- 一连接一房一座 + waiting 离席不淘汰 ----------
   await new Promise((res) => {
     const A = mk();
@@ -154,41 +173,37 @@ async function main() {
     });
   });
 
-  // ---------- 车炮中心对称（白盒走法） ----------
+  // ---------- 车炮中路对称（白盒走法） ----------
   {
     const { ThreeGameSession } = require('./server/game/three/session.js');
     const s = new ThreeGameSession('X', 'three-open');
     s.players = { wei: 'a', shu: 'b', wu: 'c' };
     s.status = 'playing';
     s.currentTurn = 'wei';
-    // 把 wei 车放到 wei:5:4（中心入口），查走法：应能到 shu 和 wu 两个阵营（对称）
+    // 把 wei 车放到 wei:4:4（丫形中路入口），应能到 shu 和 wu（对称）
     s.board.delete('wei:0:0');
-    s.board.set('wei:5:4', { piece: 'chariot', faction: 'wei', owner: 'wei', hidden: false, crossedCenter: false });
-    const moves = s.getValidMovesForPlayer('wei:5:4', 'wei');
+    s.board.set('wei:4:4', { piece: 'chariot', faction: 'wei', owner: 'wei', hidden: false, crossedRiver: false });
+    const moves = s.getValidMovesForPlayer('wei:4:4', 'wei');
     const reachShu = moves.some(m => m.key.startsWith('shu:'));
     const reachWu = moves.some(m => m.key.startsWith('wu:'));
     ck('P1 车经中心可到蜀', reachShu, JSON.stringify(moves.map(m=>m.key).filter(k=>k.startsWith('shu'))));
     ck('P1 车经中心可到吴', reachWu, JSON.stringify(moves.map(m=>m.key).filter(k=>k.startsWith('wu'))));
   }
 
-  // ---------- 兵过中心只用 crossedCenter ----------
+  // ---------- 兵按河界方向移动 ----------
   {
     const { ThreeGameSession } = require('./server/game/three/session.js');
     const s = new ThreeGameSession('X', 'three-open');
     s.players = { wei: 'a', shu: 'b', wu: 'c' };
     s.status = 'playing';
     s.currentTurn = 'wei';
-    // wei 兵在 wei:5:0，未过中心 → 只能朝中心走（不能横走/后退）
-    s.board.set('wei:5:0', { piece: 'pawn', faction: 'wei', owner: 'wei', hidden: false, crossedCenter: false });
-    const moves = s.getValidMovesForPlayer('wei:5:0', 'wei');
-    // row 5 时朝中心是 center，但 col 0 不通 center（只有 col 4 通）；所以 wei:5:0 朝中心无路（row+1 越界）
-    const hasSideways = moves.some(m => { const [f,r,c]=m.key.split(':'); return Number(c)!==0; });
-    ck('P1 未过中心兵不能横走', !hasSideways, JSON.stringify(moves));
-    // 过中心后可横走
-    s.board.set('wei:3:0', { piece: 'pawn', faction: 'wei', owner: 'wei', hidden: false, crossedCenter: true });
-    const moves2 = s.getValidMovesForPlayer('wei:3:0', 'wei');
-    const hasSide2 = moves2.some(m => { const [f,r,c]=m.key.split(':'); return Number(c)!==0; });
-    ck('P1 过中心兵可横走', hasSide2, JSON.stringify(moves2));
+    s.board.set('wei:4:8', { piece: 'pawn', faction: 'wei', owner: 'wei', hidden: false, crossedRiver: false });
+    const moves = s.getValidMovesForPlayer('wei:4:8', 'wei');
+    ck('P1 边兵从河界进入对应邻国', moves.some(m => m.key === 'shu:4:0'), JSON.stringify(moves));
+    s.board.set('shu:4:0', { piece: 'pawn', faction: 'wei', owner: 'wei', hidden: false, crossedRiver: true });
+    const moves2 = s.getValidMovesForPlayer('shu:4:0', 'wei');
+    ck('P1 过河兵可横走', moves2.some(m => m.key === 'shu:4:1'), JSON.stringify(moves2));
+    ck('P1 过河兵不可退回本阵', !moves2.some(m => m.key.startsWith('wei:')), JSON.stringify(moves2));
   }
 
   // ---------- 三人暗棋各阵营内部随机 ----------

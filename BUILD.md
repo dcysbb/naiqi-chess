@@ -45,6 +45,15 @@ npx vite build
 
 PWA 特性（自动生成）：可“添加到主屏幕”、离线外壳缓存。iOS/Android 浏览器均可用，无需安装包。
 
+### 自包含 Windows Web 主机
+
+```powershell
+npm run dist:web-host
+```
+
+产物：`dist-web-host/naiqi-web-host-1.1.1-windows-x64.zip`。包内包含网页、游戏服务器、
+局域网自动发现广播和 Node.js 运行时，解压后双击 `启动奶棋Web主机.cmd` 即可。
+
 ## 2. Windows 桌面端
 
 ```bash
@@ -62,9 +71,9 @@ electron-builder 生成 NSIS 安装包时会下载 `winCodeSign`，其中含 mac
   ```bash
   npx electron-builder --win nsis
   ```
-  产物：`dist-desktop/naiqi-1.0.4-setup.exe`
+  产物：`dist-desktop/naiqi-1.1.1-setup.exe`
 
-- **B. 用 GitHub Actions（推荐，无需改本机）**：推一个 `v*` 标签或到 Actions 页手动触发 `Build Desktop Installers` 工作流，CI 环境无符号链接限制，可直接产出 `.exe` 与 `.dmg`。配置见 `.github/workflows/build-desktop.yml`。
+- **B. 用 GitHub Actions（推荐，无需改本机）**：推一个 `v*` 标签或到 Actions 页手动触发 `Build Release Packages` 工作流，CI 环境无符号链接限制，可直接产出 `.exe`、Web 主机 `.zip`、`.dmg` 与 Android `.apk`。配置见 `.github/workflows/build-desktop.yml`。
 
 当前环境已验证**可用的解压版**：`奶棋-windows-portable.zip`（解压后双击 `奶棋.exe` 即可运行，自带服务器、mDNS 局域网广播）。
 
@@ -75,7 +84,7 @@ electron-builder 生成 NSIS 安装包时会下载 `winCodeSign`，其中含 mac
 ```bash
 npm run build
 npx electron-builder --mac dmg
-# 产物：dist-desktop/naiqi-1.0.4-universal.dmg（ad-hoc 签名，未公证，首次打开可能仍需右键 → 打开）
+# 产物：dist-desktop/naiqi-1.1.1-universal.dmg（ad-hoc 签名，未公证，首次打开可能仍需右键 → 打开）
 ```
 
 或使用上述 GitHub Actions 工作流。
@@ -109,6 +118,7 @@ export ANDROID_HOME="$HOME/AppData/Local/Android/Sdk"
 | 命令 | 作用 |
 |------|------|
 | `npm run build` | 构建前端到 client/dist |
+| `npm run dist:web-host` | 构建自带运行时的 Windows Web 局域网主机 ZIP |
 | `npm start` / `npm run server` | 启动独立服务器（端口 3030，含 mDNS 广播） |
 | `npm run dev` | Vite 开发服务器（热更新，代理 socket 到 :3030） |
 | `npm run build:desktop` | 构建 Electron 解压版 |

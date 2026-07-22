@@ -24,6 +24,14 @@ export default function App() {
     if (DEFAULT_URL) socket.connect();
 
     const onGameState = (state) => {
+      // The server emits game_state before acknowledging select_color. Use the
+      // authoritative perspective in the state so ThreeBoard never renders for
+      // one frame with a null faction and NaN canvas coordinates.
+      const perspective = state?.yourFaction || state?.yourColor;
+      if (perspective && myColorRef.current !== perspective) {
+        myColorRef.current = perspective;
+        setMyColor(perspective);
+      }
       setGameState(state);
       if (state.status !== 'finished') setGameOver(null);
       // Sync rematch flags from authoritative server state when available.

@@ -1,9 +1,9 @@
 // 三人模式（魏蜀吴）常量与布局。
-// 棋盘几何：三个 6 行 × 9 列的"半棋盘"以 120° 夹角围绕中心拼接。
-// 局部坐标：localRow 0 = 本阵后方边缘（标 1..9），localRow 5 = 最靠近中心；
+// 棋盘几何：三个 5 行 × 9 列的半棋盘围成六角鱼尾形棋盘，共 135 个交叉点。
+// 局部坐标：localRow 0 = 本阵后方边缘（标 1..9），localRow 4 = 河界前沿；
 //           localCol 0..8 对应 9 条纵线。
 // 九宫：localRow 0..2，localCol 3..5。
-// 中心：一个共享格点 `center`，与每个阵营的 (faction, 5, 4) 相邻。
+// 河界连接由 moves.js 的弯折路线定义，不存在额外中心格点。
 
 const THREE_FACTIONS = ['wei', 'shu', 'wu'];
 
@@ -31,7 +31,7 @@ const FACTION_COLORS = {
 const FACTION_LABELS = { wei: '魏', shu: '蜀', wu: '吴' };
 
 // 每阵营的局部网格尺寸。
-const ROWS = 6;
+const ROWS = 5;
 const COLS = 9;
 
 // 九宫（局部坐标）。

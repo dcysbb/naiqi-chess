@@ -16,7 +16,7 @@ const THREE_PIECE_CHARS = {
 const FACTION_COLORS = { wei: '#c0392b', shu: '#2c3e50', wu: '#27ae60' };
 const FACTION_LABELS = { wei: '魏', shu: '蜀', wu: '吴' };
 
-const ROWS = 6;
+const ROWS = 5;
 const COLS = 9;
 const PALACE = { rowMin: 0, rowMax: 2, colMin: 3, colMax: 5 };
 
