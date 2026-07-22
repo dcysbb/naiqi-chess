@@ -1,6 +1,6 @@
 {
   "name": "chess-game",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "private": true,
   "main": "desktop/main.js",
   "scripts": {
@@ -8,6 +8,7 @@
     "test": "node scripts/run-tests.js",
     "build": "cd client && npx vite build",
     "build:web": "cd client && npx vite build",
+    "dist:web-host": "npm run build:web && node scripts/build-web-host-bundle.js",
     "build:desktop": "cd client && npx vite build && cd .. && electron-builder --dir",
     "dist:win": "cd client && npx vite build && cd .. && electron-builder --win --publish never",
     "dist:mac": "cd client && npx vite build && cd .. && electron-builder --mac --publish never",

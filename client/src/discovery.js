@@ -61,18 +61,27 @@ function commonCandidateIps() {
   return out;
 }
 
+function addSubnetCandidates(out, address) {
+  const parts = String(address || '').split('.');
+  if (parts.length !== 4 || parts.some((part) => !/^\d+$/.test(part))) return;
+  const base = parts.slice(0, 3).join('.');
+  out.add(address);
+  for (const octet of [1, 2, 100, 101, 254]) out.add(`${base}.${octet}`);
+  for (let i = 1; i <= 254; i++) out.add(`${base}.${i}`);
+}
+
 async function candidateIps() {
   const out = new Set();
+
+  // A Web client served by a LAN host already knows one useful subnet from
+  // location.hostname. Probe it first so discovery completes quickly there.
+  addSubnetCandidates(out, window.location.hostname);
 
   // Android can tell us the actual local IP, which makes hotspot discovery much
   // faster and less guessy. Scan those real /24 networks before the fallbacks.
   const network = await getMobileNetworkInfo();
   for (const address of network?.addresses || []) {
-    const parts = String(address).split('.');
-    if (parts.length !== 4) continue;
-    const base = parts.slice(0, 3).join('.');
-    for (const octet of [1, 2, 100, 101, 254]) out.add(`${base}.${octet}`);
-    for (let i = 1; i <= 254; i++) out.add(`${base}.${i}`);
+    addSubnetCandidates(out, address);
   }
 
   for (const ip of commonCandidateIps()) out.add(ip);
@@ -133,7 +142,11 @@ export function startDiscovery(onHost, opts = {}) {
   const scannedAlternatePorts = new Set();
   let stopped = false;
   let mdnsActive = false;
+  let scanInFlight = false;
   const stopFns = [];
+  const onScanStateChange = typeof opts.onScanStateChange === 'function'
+    ? opts.onScanStateChange
+    : () => {};
 
   async function scanAlternatePorts(address) {
     if (!address || scannedAlternatePorts.has(address)) return;
@@ -163,18 +176,31 @@ export function startDiscovery(onHost, opts = {}) {
   // Try mDNS first (desktop). If unavailable, run the IP scan.
   mdnsActive = watchMdns(report, (hostId) => seen.delete(hostId));
   if (!mdnsActive) {
-    // Browser/mobile: run a one-shot subnet scan. Cheap to re-run periodically.
-    scanSubnet(port, report).catch(() => {});
+    const runScan = async () => {
+      if (stopped || scanInFlight) return;
+      scanInFlight = true;
+      onScanStateChange(true);
+      try {
+        await scanSubnet(port, report);
+      } finally {
+        scanInFlight = false;
+        if (!stopped) onScanStateChange(false);
+      }
+    };
+
+    // Browser/mobile: scan immediately, then refresh without overlapping scans.
+    runScan().catch(() => {});
     const interval = setInterval(() => {
       if (stopped) return;
-      scanSubnet(port, report).catch(() => {});
-    }, 8000);
+      runScan().catch(() => {});
+    }, 15000);
     // store for stop()
     stopFns.push(() => clearInterval(interval));
   }
 
   stopFns.push(() => {
     stopped = true;
+    onScanStateChange(false);
     const bridge = window.chessDiscovery;
     if (bridge && typeof bridge.stop === 'function') bridge.stop();
   });

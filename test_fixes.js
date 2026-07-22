@@ -20,6 +20,25 @@ async function main() {
     });
   });
 
+  // ---------- 创建后未选阵营返回，也必须清理空房间 ----------
+  await new Promise((res) => {
+    const A = mk();
+    A.on('connect', () => {
+      A.emit('create_room', { mode: 'chaos' }, (created) => {
+        const rid = created.roomId;
+        A.emit('leave_room', {}, () => {
+          const B = mk();
+          B.on('connect', () => {
+            B.emit('join_room', { roomId: rid }, (joined) => {
+              ck('P0-2 未选阵营返回会清理空房间', !joined.ok && /not found/i.test(joined.error), joined.error);
+              A.disconnect(); B.disconnect(); res();
+            });
+          });
+        });
+      });
+    });
+  });
+
   // ---------- 一连接一房一座 + waiting 离席不淘汰 ----------
   await new Promise((res) => {
     const A = mk();

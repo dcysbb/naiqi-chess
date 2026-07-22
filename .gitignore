@@ -4,6 +4,7 @@ node_modules/
 # Build outputs
 client/dist/
 dist-desktop/
+dist-web-host/
 *.zip
 *.apk
 *.exe
