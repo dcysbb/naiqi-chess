@@ -21,7 +21,7 @@ class ThreeGameSession {
     // 'three-open'（明棋）或 'three-dark'（暗棋翻面）
     this.mode = mode === 'three-dark' ? 'three-dark' : 'three-open';
     this.isDark = this.mode === 'three-dark';
-    this.board = new Map(); // cellKey -> {piece, faction, hidden, crossedCenter, owner}
+    this.board = new Map(); // cellKey -> {piece, faction, hidden, crossedRiver, owner}
     this.currentTurn = 'wei';
     this.players = { wei: null, shu: null, wu: null };
     this.eliminated = new Set();
@@ -50,7 +50,7 @@ class ThreeGameSession {
             piece: arranged[i],
             faction,
             hidden: this.isDark,
-            crossedCenter: false,
+            crossedRiver: false,
             owner: faction, // 暗棋时翻开前 owner 即所在阵营
           });
         });
@@ -156,12 +156,11 @@ class ThreeGameSession {
 
     // 移动：从 fromKey 删除，放到 toKey
     this.board.delete(fromKey);
-    // 更新 crossedCenter：若 toKey 是 center 或他阵营，标记为已过中心
-    const toInfo = toKey === 'center' ? { center: true } : parseKey(toKey);
-    const crossed = toKey === 'center' || (toInfo.faction && toInfo.faction !== faction);
+    const toInfo = parseKey(toKey);
+    const crossed = toInfo.faction !== faction;
     const movedPiece = {
       ...fromCell,
-      crossedCenter: fromCell.crossedCenter || crossed,
+      crossedRiver: fromCell.crossedRiver || crossed,
     };
     this.board.set(toKey, movedPiece);
 
@@ -233,7 +232,7 @@ class ThreeGameSession {
     // 为不泄露暗子真实身份，未翻开的棋子不返回 piece/faction。
     const cells = [];
     for (const [key, cell] of this.board.entries()) {
-      const info = { key, hidden: cell.hidden, owner: cell.owner, crossedCenter: cell.crossedCenter };
+      const info = { key, hidden: cell.hidden, owner: cell.owner, crossedRiver: cell.crossedRiver };
       if (!cell.hidden) {
         info.piece = cell.piece;
         info.faction = cell.faction;
@@ -243,6 +242,7 @@ class ThreeGameSession {
     return {
       mode: this.mode,
       isThree: true,
+      boardSchema: 'three-135-v1',
       rows: ROWS,
       cols: COLS,
       cells,
