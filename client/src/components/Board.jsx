@@ -192,6 +192,9 @@ function drawLastMove(ctx, moveResult, rows, cols, flip) {
 
 function getClickedCell(event, canvas, rows, cols, width, height, flip) {
   const rect = canvas.getBoundingClientRect();
+  if (!Number.isFinite(rect.width) || !Number.isFinite(rect.height) || rect.width <= 0 || rect.height <= 0) {
+    return null;
+  }
   const scaleX = width / rect.width;
   const scaleY = height / rect.height;
   const x = (event.clientX - rect.left) * scaleX;

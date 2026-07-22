@@ -21,13 +21,24 @@ const ROWS = 6;
 const COLS = 9;
 const PALACE = { rowMin: 0, rowMax: 2, colMin: 3, colMax: 5 };
 
+function isFaction(value) {
+  return Object.prototype.hasOwnProperty.call(FACTION_ANGLES, value);
+}
+
+function finiteNumber(value, fallback = 0) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : fallback;
+}
+
 // 阵营局部坐标 → 旋转到画布
 // 局部：原点在本阵后方中点(0,4)，x=col方向，y=row方向（朝中心）
 // 阵营旋转角 = 阵营朝向；再整体旋转使"我方阵营"在底部。
 function localToCanvas(faction, row, col, center, viewerFaction) {
-  const lx = (col - 4) * CELL;
-  const ly = row * CELL;
-  const factionAngle = (FACTION_ANGLES[faction] - FACTION_ANGLES[viewerFaction]) * Math.PI / 180;
+  const safeFaction = isFaction(faction) ? faction : 'wei';
+  const safeViewer = isFaction(viewerFaction) ? viewerFaction : 'wei';
+  const lx = (finiteNumber(col, 4) - 4) * CELL;
+  const ly = finiteNumber(row) * CELL;
+  const factionAngle = (FACTION_ANGLES[safeFaction] - FACTION_ANGLES[safeViewer]) * Math.PI / 180;
   const cos = Math.cos(factionAngle);
   const sin = Math.sin(factionAngle);
   const x = center.x + lx * cos - ly * sin;
@@ -279,6 +290,9 @@ function allNodes(center, viewerFaction) {
 // 像素 → cellKey：遍历所有棋盘节点找最近（覆盖空格，确保可点击）。
 function getClickedCell(event, canvas, center, viewerFaction, width, height) {
   const rect = canvas.getBoundingClientRect();
+  if (!Number.isFinite(rect.width) || !Number.isFinite(rect.height) || rect.width <= 0 || rect.height <= 0) {
+    return null;
+  }
   const scaleX = width / rect.width;
   const scaleY = height / rect.height;
   const x = (event.clientX - rect.left) * scaleX;
@@ -305,8 +319,10 @@ export default function ThreeBoard({ gameState, myColor, socket, gameOver, moveR
   const [highlights, setHighlights] = useState([]);
 
   const cells = gameState?.cells || [];
+  const stateFaction = gameState?.yourFaction;
+  const viewerFaction = isFaction(myColor) ? myColor : isFaction(stateFaction) ? stateFaction : 'wei';
   const isGameActive = gameState?.status === 'playing';
-  const isMyTurn = gameState?.currentTurn === myColor && isGameActive && !gameOver;
+  const isMyTurn = gameState?.currentTurn === viewerFaction && isGameActive && !gameOver;
 
   // 画布尺寸：以中心为原点，需容纳三阵营展开
   const reach = ROWS * CELL + MARGIN + 40;
@@ -324,18 +340,18 @@ export default function ThreeBoard({ gameState, myColor, socket, gameOver, moveR
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     ctx.clearRect(0, 0, width, height);
-    drawBoard(ctx, center, myColor, width, height);
-    drawLastMove(ctx, moveResult, center, myColor);
-    drawHighlights(ctx, highlights, center, myColor);
+    drawBoard(ctx, center, viewerFaction, width, height);
+    drawLastMove(ctx, moveResult, center, viewerFaction);
+    drawHighlights(ctx, highlights, center, viewerFaction);
 
     for (const cell of cells) {
-      drawPiece(ctx, cell, center, myColor, selected === cell.key);
+      drawPiece(ctx, cell, center, viewerFaction, selected === cell.key);
     }
-  }, [cells, center, height, highlights, myColor, moveResult, selected, width]);
+  }, [cells, center, height, highlights, moveResult, selected, viewerFaction, width]);
 
   const selectPiece = useCallback((key) => {
     const cell = cells.find((c) => c.key === key);
-    if (!cell || cell.owner !== myColor) {
+    if (!cell || cell.owner !== viewerFaction) {
       setSelected(null);
       setHighlights([]);
       return;
@@ -357,11 +373,11 @@ export default function ThreeBoard({ gameState, myColor, socket, gameOver, moveR
         isCapture: Boolean(cells.find((c) => c.key === m.key)?.piece),
       })));
     });
-  }, [cells, gameState, myColor, socket]);
+  }, [cells, gameState, socket, viewerFaction]);
 
   const handleCanvasClick = useCallback((event) => {
     if (!isMyTurn || cells.length === 0) return;
-    const clicked = getClickedCell(event, canvasRef.current, center, myColor, width, height);
+    const clicked = getClickedCell(event, canvasRef.current, center, viewerFaction, width, height);
     if (!clicked) {
       setSelected(null);
       setHighlights([]);
@@ -379,7 +395,7 @@ export default function ThreeBoard({ gameState, myColor, socket, gameOver, moveR
       return;
     }
 
-    if (gameState?.isDark && cell?.hidden && cell.owner === myColor) {
+    if (gameState?.isDark && cell?.hidden && cell.owner === viewerFaction) {
       socket.emit('flip_three_piece', { key: clicked.key }, (res) => {
         if (!res?.ok) console.warn('Flip rejected:', res?.error);
       });
@@ -389,7 +405,7 @@ export default function ThreeBoard({ gameState, myColor, socket, gameOver, moveR
     }
 
     selectPiece(clicked.key);
-  }, [cells, center, gameState, highlights, isMyTurn, myColor, selectPiece, selected, socket, width]);
+  }, [cells, center, gameState, highlights, isMyTurn, selectPiece, selected, socket, viewerFaction, width]);
 
   if (!gameState) return null;
 
